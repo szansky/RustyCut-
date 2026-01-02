@@ -2106,7 +2106,7 @@ impl VideoEditorApp {
     }
 
     fn maybe_update_preview(&mut self, ctx: &egui::Context) {
-        if self.input_path.trim().is_empty() || self.duration <= 0.0 {
+        if (self.input_path.trim().is_empty() && self.clips.is_empty()) || self.duration <= 0.0 {
             return;
         }
         if self.is_playing {
@@ -2130,7 +2130,7 @@ impl VideoEditorApp {
     }
 
     fn maybe_update_preview_drag(&mut self, _ctx: &egui::Context) {
-        if self.input_path.trim().is_empty() || self.duration <= 0.0 {
+        if (self.input_path.trim().is_empty() && self.clips.is_empty()) || self.duration <= 0.0 {
             return;
         }
 
@@ -2241,7 +2241,7 @@ impl VideoEditorApp {
             self.is_playing = true;
             self.last_tick = Some(Instant::now());
         }
-        if self.input_path.trim().is_empty() || self.duration <= 0.0 {
+        if self.clips.is_empty() && self.input_path.trim().is_empty() || self.duration <= 0.0 {
             return Err(anyhow!("Brak pliku lub dlugosci"));
         }
         
@@ -2274,7 +2274,7 @@ impl VideoEditorApp {
 
     fn start_audio_playback(&mut self) -> Result<()> {
         // Early exit if no valid input
-        if self.input_path.is_empty() && self.media_library.is_empty() {
+        if self.input_path.is_empty() && self.media_library.is_empty() && self.clips.is_empty() {
             return Ok(());
         }
         let host = cpal::default_host();
@@ -2548,7 +2548,7 @@ impl VideoEditorApp {
 
     fn start_video_playback(&mut self) -> Result<()> {
         // Early exit if no valid input
-        if self.input_path.is_empty() && self.media_library.is_empty() {
+        if self.input_path.is_empty() && self.media_library.is_empty() && self.clips.is_empty() {
             return Ok(());
         }
         let (width, height) = scaled_preview_size(self.video_width, self.video_height, 640);
