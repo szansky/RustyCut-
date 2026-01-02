@@ -1486,8 +1486,10 @@ fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
             }
         }
 
-        // Draw clip rectangles
+        // Draw clip rectangles with filled background
         if clip.video_enabled {
+            // Fill background first
+            painter.rect_filled(video_clip_rect, 4.0, video_color.linear_multiply(0.5));
             painter.rect_stroke(video_clip_rect, 4.0, egui::Stroke::new(2.0, video_color));
         } else {
             // Disabled track - dim overlay
@@ -1495,6 +1497,9 @@ fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
         }
 
         if clip.audio_enabled {
+            // Fill background first
+            let audio_bg = egui::Color32::from_rgb(90, 60, 120); // Purple-ish for audio
+            painter.rect_filled(audio_clip_rect, 4.0, audio_bg.linear_multiply(0.5));
             painter.rect_stroke(audio_clip_rect, 4.0, egui::Stroke::new(2.0, audio_color));
         } else {
             painter.rect_filled(audio_clip_rect, 4.0, egui::Color32::from_rgba_unmultiplied(50, 50, 50, 150));
