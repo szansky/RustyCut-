@@ -274,7 +274,9 @@ struct VideoEditorApp {
     
     // Media Library
     media_library: Vec<MediaAsset>,
-    media_thumbs: HashMap<usize, egui::TextureHandle>, // ID -> Texture
+    media_thumbs: HashMap<usize, egui::TextureHandle>, // ID -> Texture (Library Icon)
+    media_waveforms: HashMap<usize, egui::TextureHandle>, // ID -> Waveform Texture
+    media_filmstrips: HashMap<usize, Vec<(f32, egui::TextureHandle)>>, // ID -> Vec<(Timestamp, Texture)>
     dragging_library_asset: Option<usize>, // Asset being dragged from library
 
     language_switch_start: Option<Instant>,
@@ -699,6 +701,39 @@ impl eframe::App for VideoEditorApp {
                                 if let Ok(texture) = thumb_result {
                                     self.media_thumbs.insert(idx, texture);
                                 }
+                                
+                                // Generate Filmstrip (5 thumbs for video)
+                                if kind == MediaType::Video {
+                                    let count = 5;
+                                    let step = if dur > 0.0 { dur / count as f32 } else { 1.0 };
+                                    let mut strips = Vec::new();
+                                    for i in 0..count {
+                                        let t = (i as f32 + 0.5) * step;
+                                        if let Ok(data) = generate_frame_memory(&path_str, t, 160, 0) { // Small width for memory efficiency
+                                            if let Ok(tex) = load_texture_from_memory(ctx, &data, &format!("film_{}_{}", idx, i)) {
+                                                strips.push((t, tex));
+                                            }
+                                        }
+                                    }
+                                    if !strips.is_empty() {
+                                        self.media_filmstrips.insert(idx, strips);
+                                    }
+                                }
+                                
+                                // Generate Waveform (Audio or Video)
+                                if kind == MediaType::Audio || kind == MediaType::Video {
+                                    if let Ok(_) = self.ensure_temp_dir() {
+                                        if let Some(temp) = &self.temp_dir {
+                                            let wave_path = temp.join(format!("wave_{}.png", idx));
+                                            if let Ok(_) = generate_waveform(&path_str, &wave_path) {
+                                                if let Ok(tex) = load_texture_from_path(ctx, &wave_path, &format!("wave_{}", idx)) {
+                                                    self.media_waveforms.insert(idx, tex);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                
                             }
                         }
                     }
@@ -1448,55 +1483,119 @@ fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
         };
 
         // Draw thumbnails INSIDE clip bounds (video track)
-        if clip.video_enabled && !app.thumb_textures.is_empty() && app.duration > 0.0 {
-            let chunk = app.duration / app.thumb_textures.len().max(1) as f32;
-            let thumb_w = app.timeline_zoom * chunk;
-            for (tidx, texture) in app.thumb_textures.iter().enumerate() {
-                let t = app.thumb_times[tidx];
-                // Check if this thumbnail overlaps with the clip
-                let thumb_start = t - chunk * 0.5;
-                let thumb_end = t + chunk * 0.5;
-                if thumb_end < clip.start || thumb_start > clip.end {
-                    continue;
+        // Draw thumbnails (Filmstrip) INSIDE clip bounds
+        if clip.video_enabled && app.duration > 0.0 {
+            // Check for library asset filmstrip
+            if let Some(asset_id) = clip.asset_id {
+                if let Some(strips) = app.media_filmstrips.get(&asset_id) {
+                     let _clip_w = (clip.end - clip.start) * app.timeline_zoom;
+                     // We assume clip plays from 0.0 of asset (no trim implemented yet)
+                     // Or we could try to support simple mapping
+                     
+                     for (t, texture) in strips {
+                         let asset_t = *t;
+                         // Check if this thumb is within the visible clip duration relative to clip start
+                         // Since we don't have trim_in yet, asset_t maps to clip.start + asset_t
+                         let timeline_t = clip.start + asset_t;
+                         
+                         // Skip if outside clip bounds (redundant if clip length == asset length)
+                         if timeline_t < clip.start || timeline_t > clip.end { continue; }
+
+                         let _thumb_w = texture.size_vec2().x as f32; // Use actual aspect?
+                         let aspect = texture.size_vec2().x / texture.size_vec2().y;
+                         let draw_h = video_clip_rect.height();
+                         let draw_w = draw_h * aspect; // Keep aspect ratio
+                         
+                         let x_center = left + (timeline_t - app.timeline_offset) * app.timeline_zoom;
+                         let x0 = x_center - draw_w * 0.5;
+                         let x1 = x0 + draw_w;
+                         
+                         // Clipping against clip bounds and view bounds
+                         let clip_x0 = left + (clip.start - app.timeline_offset) * app.timeline_zoom;
+                         let clip_x1 = left + (clip.end - app.timeline_offset) * app.timeline_zoom;
+                         
+                         let final_x0 = x0.max(clip_x0).max(video_rect.left());
+                         let final_x1 = x1.min(clip_x1).min(video_rect.right());
+                         
+                         if final_x1 > final_x0 {
+                             let u0 = ((final_x0 - x0) / draw_w).clamp(0.0, 1.0);
+                             let u1 = ((final_x1 - x0) / draw_w).clamp(0.0, 1.0);
+                             
+                             painter.image(
+                                texture.id(),
+                                egui::Rect::from_min_max(
+                                    egui::pos2(final_x0, video_clip_rect.top()),
+                                    egui::pos2(final_x1, video_clip_rect.bottom())
+                                ),
+                                egui::Rect::from_min_max(egui::pos2(u0, 0.0), egui::pos2(u1, 1.0)),
+                                egui::Color32::WHITE,
+                             );
+                         }
+                     }
                 }
-                let x0 = left + (thumb_start - app.timeline_offset) * app.timeline_zoom;
-                let x1 = x0 + thumb_w;
-                // Clip the thumbnail to the clip bounds
-                let clip_x0 = left + (clip.start - app.timeline_offset) * app.timeline_zoom;
-                let clip_x1 = left + (clip.end - app.timeline_offset) * app.timeline_zoom;
-                let draw_x0 = x0.max(clip_x0).max(video_rect.left());
-                let draw_x1 = x1.min(clip_x1).min(video_rect.right());
-                if draw_x1 <= draw_x0 {
-                    continue;
-                }
-                // Calculate UV coordinates for partial thumbnail
-                let u0 = ((draw_x0 - x0) / thumb_w).clamp(0.0, 1.0);
-                let u1 = ((draw_x1 - x0) / thumb_w).clamp(0.0, 1.0);
-                let thumb_rect = egui::Rect::from_min_max(
-                    egui::pos2(draw_x0, video_rect.top()),
-                    egui::pos2(draw_x1, video_rect.bottom()),
-                );
-                painter.image(
-                    texture.id(),
-                    thumb_rect,
-                    egui::Rect::from_min_max(egui::pos2(u0, 0.0), egui::pos2(u1, 1.0)),
-                    egui::Color32::WHITE,
-                );
+            } else if !app.thumb_textures.is_empty() {
+                 // Fallback to legacy single-file thumbs
+                 let chunk = app.duration / app.thumb_textures.len().max(1) as f32;
+                 let thumb_w = app.timeline_zoom * chunk;
+                 for (tidx, texture) in app.thumb_textures.iter().enumerate() {
+                    // (Legacy code preserved for single-file mode logic if needed, but simplified)
+                     let t = app.thumb_times[tidx];
+                     let thumb_start = t - chunk * 0.5;
+                     let thumb_end = t + chunk * 0.5;
+                     if thumb_end < clip.start || thumb_start > clip.end { continue; }
+                     
+                     let x0 = left + (thumb_start - app.timeline_offset) * app.timeline_zoom;
+                     let x1 = x0 + thumb_w;
+                     
+                     let clip_x0 = left + (clip.start - app.timeline_offset) * app.timeline_zoom;
+                     let clip_x1 = left + (clip.end - app.timeline_offset) * app.timeline_zoom;
+                     let draw_x0 = x0.max(clip_x0).max(video_rect.left());
+                     let draw_x1 = x1.min(clip_x1).min(video_rect.right());
+                     
+                     if draw_x1 > draw_x0 {
+                        let u0 = ((draw_x0 - x0) / thumb_w).clamp(0.0, 1.0);
+                        let u1 = ((draw_x1 - x0) / thumb_w).clamp(0.0, 1.0);
+                        painter.image(
+                            texture.id(),
+                            egui::Rect::from_min_max(egui::pos2(draw_x0, video_rect.top()), egui::pos2(draw_x1, video_rect.bottom())),
+                            egui::Rect::from_min_max(egui::pos2(u0, 0.0), egui::pos2(u1, 1.0)),
+                            egui::Color32::WHITE,
+                        );
+                     }
+                 }
             }
         }
 
         // Draw waveform INSIDE clip bounds (audio track)
         if clip.audio_enabled {
-            if let Some(texture) = &app.waveform_texture {
-                // Calculate UV coordinates based on clip position in the original video
-                let u0 = (clip.start / app.duration).clamp(0.0, 1.0);
-                let u1 = (clip.end / app.duration).clamp(0.0, 1.0);
-                painter.image(
-                    texture.id(),
-                    audio_clip_rect,
-                    egui::Rect::from_min_max(egui::pos2(u0, 0.0), egui::pos2(u1, 1.0)),
-                    egui::Color32::WHITE,
-                );
+            let mut drawn = false;
+            // Check library waveform
+            if let Some(asset_id) = clip.asset_id {
+                if let Some(texture) = app.media_waveforms.get(&asset_id) {
+                     // Draw full asset waveform stretched over clip duration (since clip is full asset currently)
+                     // If we add trimming later, we'd need to adjust UVs: u0 = trim_in / asset.dur, etc.
+                     painter.image(
+                        texture.id(),
+                        audio_clip_rect,
+                        egui::Rect::from_min_max(egui::pos2(0.0,0.0), egui::pos2(1.0,1.0)),
+                        egui::Color32::WHITE
+                     );
+                     drawn = true;
+                }
+            }
+            
+            // Fallback / Legacy waveform
+            if !drawn {
+                if let Some(texture) = &app.waveform_texture {
+                    let u0 = (clip.start / app.duration).clamp(0.0, 1.0);
+                    let u1 = (clip.end / app.duration).clamp(0.0, 1.0);
+                    painter.image(
+                        texture.id(),
+                        audio_clip_rect,
+                        egui::Rect::from_min_max(egui::pos2(u0, 0.0), egui::pos2(u1, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+                }
             }
         }
 
@@ -2798,6 +2897,8 @@ impl Default for VideoEditorApp {
             
             media_library: Vec::new(),
             media_thumbs: HashMap::new(),
+            media_waveforms: HashMap::new(),
+            media_filmstrips: HashMap::new(),
             dragging_library_asset: None,
             language_switch_start: None,
             status: String::new(),
