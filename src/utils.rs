@@ -1,5 +1,5 @@
 // utils.rs - Funkcje pomocnicze
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use eframe::egui;
 use std::path::Path;
 

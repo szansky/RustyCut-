@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 
 mod types;
 mod ffmpeg;
@@ -16,7 +16,7 @@ use crate::ffmpeg::*;
 use crate::utils::*;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 use std::process::Stdio;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -80,7 +80,6 @@ impl std::fmt::Display for HwAccelMode {
     }
 }
 
-fn default_true() -> bool { true }
 
 #[allow(dead_code)]
 struct TextResources {
@@ -1929,7 +1928,7 @@ impl VideoEditorApp {
     }
 
     fn resolve_clip_source(&self, time: f32) -> (String, f32) {
-        for (idx, clip) in self.clips.iter().enumerate() {
+        for (_idx, clip) in self.clips.iter().enumerate() {
             if clip.video_enabled && time >= clip.start && time < clip.end {
                 let local_time = time - clip.start;
                 // Fade in/out logic might be here but for source we just need path
@@ -2020,6 +2019,10 @@ impl VideoEditorApp {
     }
 
     fn start_audio_playback(&mut self) -> Result<()> {
+        // Early exit if no valid input
+        if self.input_path.is_empty() && self.media_library.is_empty() {
+            return Ok(());
+        }
         let host = cpal::default_host();
         let device = host
             .default_output_device()
@@ -2290,6 +2293,10 @@ impl VideoEditorApp {
     }
 
     fn start_video_playback(&mut self) -> Result<()> {
+        // Early exit if no valid input
+        if self.input_path.is_empty() && self.media_library.is_empty() {
+            return Ok(());
+        }
         let (width, height) = scaled_preview_size(self.video_width, self.video_height, 640);
         let stop = Arc::new(AtomicBool::new(false));
         let stop_thread = Arc::clone(&stop);
