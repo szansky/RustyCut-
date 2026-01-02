@@ -1026,6 +1026,17 @@ impl eframe::App for VideoEditorApp {
             ctx.request_repaint();
         }
         self.was_dragging_playhead = self.dragging_playhead;
+        
+        // Global drop handling for library asset drag
+        // This runs after all panels are drawn to properly detect releases
+        if self.dragging_library_asset.is_some() {
+            let released = ctx.input(|i| i.pointer.any_released());
+            if released {
+                // Drop was not handled by timeline (would have cleared dragging_library_asset)
+                // So this is a cancel - clear the state
+                self.dragging_library_asset = None;
+            }
+        }
     }
 }
 
