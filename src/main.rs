@@ -275,6 +275,7 @@ struct VideoEditorApp {
     // Media Library
     media_library: Vec<MediaAsset>,
     media_thumbs: HashMap<usize, egui::TextureHandle>, // ID -> Texture
+    dragging_library_asset: Option<usize>, // Asset being dragged from library
 
     language_switch_start: Option<Instant>,
     status: String,
@@ -678,21 +679,44 @@ impl eframe::App for VideoEditorApp {
                 ui.add_space(5.0);
                 egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
                     let mut added_clip = None;
+                    let mut drag_started = None;
+                    
                     for (idx, asset) in self.media_library.iter().enumerate() {
-                        ui.horizontal(|ui| {
+                        let _row_id = egui::Id::new(("library_asset", idx));
+                        let _row_response = ui.horizontal(|ui| {
                             let icon = match asset.kind {
                                 MediaType::Video => "🎬",
                                 MediaType::Audio => "🔊",
                                 MediaType::Image => "🖼️",
                             };
                             ui.label(icon);
-                            ui.label(egui::RichText::new(&asset.name).strong());
+                            // Make the name label draggable
+                            let label = ui.add(
+                                egui::Label::new(egui::RichText::new(&asset.name).strong())
+                                    .sense(egui::Sense::drag())
+                            );
+                            if label.drag_started() {
+                                drag_started = Some(idx);
+                            }
                             if ui.button("➕").on_hover_text("Add to Timeline").clicked() {
                                 added_clip = Some(idx);
                             }
                         });
                         ui.label(format!("Dur: {:.2}s", asset.duration));
                         ui.separator();
+                    }
+                    
+                    // Track drag state
+                    if let Some(idx) = drag_started {
+                        self.dragging_library_asset = Some(idx);
+                    }
+                    
+                    // Check if drag released (no longer dragging)
+                    if self.dragging_library_asset.is_some() {
+                        if !ui.input(|i| i.pointer.any_down()) {
+                            // Drag ended - reset state (drop handled in timeline)
+                            // We keep dragging_library_asset set until processed by timeline
+                        }
                     }
                     
                     if let Some(idx) = added_clip {
@@ -705,12 +729,33 @@ impl eframe::App for VideoEditorApp {
                             linked: asset.kind == MediaType::Video,
                             video_enabled: asset.kind != MediaType::Audio,
                             audio_enabled: asset.kind != MediaType::Image,
-                            asset_id: Some(idx), // Using index as ID for MVP
+                            asset_id: Some(idx),
                         });
                         self.selected_clip = Some(self.clips.len() - 1);
                         self.status = format!("Added clip: {}", asset.name);
                     }
                 });
+                
+                // Show drag indicator
+                if let Some(idx) = self.dragging_library_asset {
+                    if let Some(asset) = self.media_library.get(idx) {
+                        if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
+                            // Draw floating label at cursor
+                            let painter = ui.ctx().layer_painter(egui::LayerId::new(
+                                egui::Order::Tooltip,
+                                egui::Id::new("drag_indicator"),
+                            ));
+                            let text = format!("📎 {}", asset.name);
+                            painter.text(
+                                pos + egui::vec2(10.0, 10.0),
+                                egui::Align2::LEFT_TOP,
+                                text,
+                                egui::TextStyle::Body.resolve(ui.style()),
+                                egui::Color32::WHITE,
+                            );
+                        }
+                    }
+                }
 
                 ui.separator();
                 ui.label(&self.text.duration_label);
@@ -1645,6 +1690,55 @@ fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
         }
     }
 
+    // Handle library asset drop onto timeline
+    if let Some(asset_idx) = app.dragging_library_asset {
+        // Check if pointer is over timeline area (video_rect or audio_rect)
+        let in_timeline = video_rect.contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default())
+            || audio_rect.contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default());
+        
+        // Check if drag was released
+        if !ui.input(|i| i.pointer.any_down()) {
+            if in_timeline {
+                // Calculate drop time position
+                if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
+                    let drop_time = app.timeline_offset + ((pos.x - left) / app.timeline_zoom).clamp(0.0, window);
+                    
+                    // Create clip from the dragged asset
+                    if let Some(asset) = app.media_library.get(asset_idx) {
+                        let asset_duration = asset.duration;
+                        let asset_kind = asset.kind;
+                        let asset_name = asset.name.clone();
+                        
+                        app.clips.push(Clip {
+                            asset_id: Some(asset_idx),
+                            start: drop_time,
+                            end: drop_time + asset_duration,
+                            fade_in: 0.0,
+                            fade_out: 0.0,
+                            linked: asset_kind == MediaType::Video,
+                            video_enabled: asset_kind != MediaType::Audio,
+                            audio_enabled: asset_kind != MediaType::Image,
+                        });
+                        app.selected_clip = Some(app.clips.len() - 1);
+                        app.status = format!("Dropped: {} at {:.2}s", asset_name, drop_time);
+                        changed = true;
+                    }
+                }
+            }
+            // Always clear the drag state when mouse released
+            app.dragging_library_asset = None;
+        }
+        
+        // Visual feedback: highlight timeline when dragging over it
+        if in_timeline && ui.input(|i| i.pointer.any_down()) {
+            painter.rect_stroke(
+                video_rect.union(audio_rect),
+                4.0,
+                egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 200, 100)),
+            );
+        }
+    }
+
     changed
 }
 
@@ -2510,6 +2604,7 @@ impl Default for VideoEditorApp {
             
             media_library: Vec::new(),
             media_thumbs: HashMap::new(),
+            dragging_library_asset: None,
             language_switch_start: None,
             status: String::new(),
             preview_rx: rx,
