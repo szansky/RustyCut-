@@ -8,7 +8,9 @@ The project is currently in **Open Beta**. We focus on performance, minimalism, 
 
 ## 🆕 Recent Updates (v0.2.0)
 
-*   **Smart Playback:** Smooth playback despite timeline gaps (Auto-Black & Silence) - no stuttering!
+*   **Visual Timeline:** Creates filmstrips (thumbnails) for videos and waveforms for audio tracks (Davinci Resolve style).
+*   **Media Library Grid:** New responsive grid layout for media assets with improved card styling.
+*   **Smart Playback Engine:** Fixed playback for library-only projects and improved gap handling.
 *   **Safe Blade Tool:** Clip dragging is disabled when using the cut tool (prevents accidental moves).
 *   **Full Localization:** 100% support for PL/EN (including error messages, empty states, and modals).
 *   **UX Improvements:** Improved window centering and interface responsiveness.
