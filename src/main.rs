@@ -649,28 +649,49 @@ impl eframe::App for VideoEditorApp {
                         for path in paths {
                             let path_str = path.display().to_string();
                             // Detect type using ffprobe logic or extension
-                            // For MVP, we use ffprobe. 
                             if let Ok((dur, w, h, _fps)) = get_video_info_ffprobe(&path_str) {
                                 let kind = if w == 0 && h == 0 {
                                     MediaType::Audio 
-                                } else if dur < 0.1 && (path_str.ends_with(".png") || path_str.ends_with(".jpg")) {
+                                } else if dur < 0.1 && (path_str.ends_with(".png") || path_str.ends_with(".jpg") || path_str.ends_with(".jpeg") || path_str.ends_with(".webp")) {
                                     MediaType::Image
                                 } else {
                                     MediaType::Video
                                 };
                                 
-                                let id = self.media_library.len() + 1; // 0 reserved? No, let's start at 0? 
-                                // Actually asset_id is Option<usize>. 
-                                // Let's use simple indexing for now, but safer to use ID.
-                                // Current logic: self.media_library index.
+                                let idx = self.media_library.len();
                                 let asset = MediaAsset {
-                                    id, 
+                                    id: idx, 
                                     path: path_str.clone(),
                                     name: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
                                     kind,
                                     duration: if kind == MediaType::Image { 5.0 } else { dur },
                                 };
                                 self.media_library.push(asset);
+                                
+                                // Generate thumbnail
+                                let thumb_result = match kind {
+                                    MediaType::Image => {
+                                        // Load image directly as thumbnail (scaled)
+                                        load_texture_from_path(ctx, Path::new(&path_str), &format!("lib_thumb_{}", idx))
+                                    },
+                                    MediaType::Video => {
+                                        // Extract frame at 10% of duration
+                                        let thumb_time = dur * 0.1;
+                                        if let Ok(data) = generate_frame_memory(&path_str, thumb_time, 80, 0) {
+                                            load_texture_from_memory(ctx, &data, &format!("lib_thumb_{}", idx))
+                                        } else {
+                                            Err(anyhow!("Failed to generate video thumbnail"))
+                                        }
+                                    },
+                                    MediaType::Audio => {
+                                        // No thumbnail for audio - will use icon
+                                        Err(anyhow!("Audio has no thumbnail"))
+                                    }
+                                };
+                                
+                                if let Ok(texture) = thumb_result {
+                                    self.media_thumbs.insert(idx, texture);
+                                }
                             }
                         }
                     }
@@ -681,29 +702,105 @@ impl eframe::App for VideoEditorApp {
                     let mut added_clip = None;
                     let mut drag_started = None;
                     
+                    // Display assets as thumbnail cards
                     for (idx, asset) in self.media_library.iter().enumerate() {
-                        let _row_id = egui::Id::new(("library_asset", idx));
-                        let _row_response = ui.horizontal(|ui| {
-                            let icon = match asset.kind {
-                                MediaType::Video => "🎬",
-                                MediaType::Audio => "🔊",
-                                MediaType::Image => "🖼️",
-                            };
-                            ui.label(icon);
-                            // Make the name label draggable
-                            let label = ui.add(
-                                egui::Label::new(egui::RichText::new(&asset.name).strong())
-                                    .sense(egui::Sense::drag())
+                        let _card_response = ui.vertical(|ui| {
+                            ui.set_min_width(160.0);
+                            
+                            // Thumbnail area (draggable)
+                            let thumb_size = egui::vec2(150.0, 84.0); // 16:9 aspect
+                            let (thumb_rect, thumb_response) = ui.allocate_exact_size(
+                                thumb_size,
+                                egui::Sense::click_and_drag()
                             );
-                            if label.drag_started() {
+                            
+                            // Draw thumbnail background
+                            ui.painter().rect_filled(
+                                thumb_rect,
+                                4.0,
+                                egui::Color32::from_gray(50)
+                            );
+                            
+                            // Draw thumbnail or icon
+                            if let Some(texture) = self.media_thumbs.get(&idx) {
+                                let tex_size = texture.size_vec2();
+                                // Scale to fit
+                                let scale = (thumb_size.x / tex_size.x).min(thumb_size.y / tex_size.y);
+                                let scaled = tex_size * scale;
+                                let offset = (thumb_size - scaled) * 0.5;
+                                let img_rect = egui::Rect::from_min_size(
+                                    thumb_rect.min + offset,
+                                    scaled
+                                );
+                                ui.painter().image(
+                                    texture.id(),
+                                    img_rect,
+                                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                                    egui::Color32::WHITE
+                                );
+                            } else {
+                                // Draw icon for audio or missing thumbnail
+                                let icon = match asset.kind {
+                                    MediaType::Video => "🎬",
+                                    MediaType::Audio => "🎵",
+                                    MediaType::Image => "🖼️",
+                                };
+                                ui.painter().text(
+                                    thumb_rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    icon,
+                                    egui::FontId::proportional(32.0),
+                                    egui::Color32::WHITE
+                                );
+                            }
+                            
+                            // Type badge
+                            let badge_text = match asset.kind {
+                                MediaType::Video => "VIDEO",
+                                MediaType::Audio => "AUDIO",
+                                MediaType::Image => "IMAGE",
+                            };
+                            let badge_color = match asset.kind {
+                                MediaType::Video => egui::Color32::from_rgb(66, 133, 244),
+                                MediaType::Audio => egui::Color32::from_rgb(234, 67, 53),
+                                MediaType::Image => egui::Color32::from_rgb(52, 168, 83),
+                            };
+                            let badge_rect = egui::Rect::from_min_size(
+                                thumb_rect.min + egui::vec2(4.0, 4.0),
+                                egui::vec2(40.0, 14.0)
+                            );
+                            ui.painter().rect_filled(badge_rect, 2.0, badge_color);
+                            ui.painter().text(
+                                badge_rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                badge_text,
+                                egui::FontId::proportional(8.0),
+                                egui::Color32::WHITE
+                            );
+                            
+                            // Handle drag start
+                            if thumb_response.drag_started() {
                                 drag_started = Some(idx);
                             }
-                            if ui.button("➕").on_hover_text("Add to Timeline").clicked() {
+                            
+                            // Handle double-click to add
+                            if thumb_response.double_clicked() {
                                 added_clip = Some(idx);
                             }
+                            
+                            // Asset name (truncated)
+                            let name_display = if asset.name.len() > 18 {
+                                format!("{}...", &asset.name[..15])
+                            } else {
+                                asset.name.clone()
+                            };
+                            ui.label(egui::RichText::new(name_display).small());
+                            
+                            // Duration
+                            ui.label(egui::RichText::new(format!("{:.1}s", asset.duration)).small().weak());
                         });
-                        ui.label(format!("Dur: {:.2}s", asset.duration));
-                        ui.separator();
+                        
+                        ui.add_space(4.0);
                     }
                     
                     // Track drag state
