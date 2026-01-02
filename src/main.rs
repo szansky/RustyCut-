@@ -2293,8 +2293,24 @@ impl VideoEditorApp {
 
         let stop = Arc::new(AtomicBool::new(false));
         let buffer = Arc::clone(&self.audio_buffer);
-        let input = self.input_path.clone();
-        let start_time = self.playhead.max(0.0);
+        
+        // Resolve input path - matches video logic
+        let (resolved_path, clip_offset) = self.resolve_clip_source(self.playhead);
+        let input = if !resolved_path.is_empty() {
+             resolved_path
+        } else {
+             if let Some(first) = self.clips.first().and_then(|c| c.asset_id).and_then(|id| self.media_library.get(id)) {
+                 first.path.clone()
+             } else {
+                 self.input_path.clone()
+             }
+        };
+        
+        let start_time = if input != self.input_path {
+            clip_offset
+        } else {
+            self.playhead.max(0.0)
+        };
         
         // Generujemy filtry audio dla playbacku
         let (_, af_opt) = self.build_playback_filters(start_time);
@@ -2555,8 +2571,26 @@ impl VideoEditorApp {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_thread = Arc::clone(&stop);
         let frames = Arc::clone(&self.playback_frames);
-        let input = self.input_path.clone();
-        let start_time = self.playhead.max(0.0);
+        
+        // Resolve input path - if legacy path is empty, try to find clip at playhead
+        let (resolved_path, clip_offset) = self.resolve_clip_source(self.playhead);
+        let input = if !resolved_path.is_empty() {
+             resolved_path
+        } else {
+             // Fallback: if nothing found at playhead, try first clip or just keep empty (which will fail in ffmpeg but handled gracefully)
+             if let Some(first) = self.clips.first().and_then(|c| c.asset_id).and_then(|id| self.media_library.get(id)) {
+                 first.path.clone()
+             } else {
+                 self.input_path.clone()
+             }
+        };
+        
+        let start_time = if input != self.input_path {
+            clip_offset // For library clips, use local time (offset from start of clip)
+        } else {
+            self.playhead.max(0.0) // For simple mode, use global time
+        };
+
         let fps = self.video_fps.max(1.0);
         let audio_clock = Arc::clone(&self.audio_samples_played);
         let sample_rate = self.audio_sample_rate.max(1);
