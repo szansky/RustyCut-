@@ -664,7 +664,14 @@ impl eframe::App for VideoEditorApp {
                                     path: path_str.clone(),
                                     name: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
                                     kind,
-                                    duration: if kind == MediaType::Image { 5.0 } else { dur },
+                                    duration: if kind == MediaType::Image { 
+                                        5.0 
+                                    } else if dur < 0.1 {
+                                        println!("WARNING: Detected duration 0.0s for {}, defaulting to 10.0s", path_str);
+                                        10.0 
+                                    } else { 
+                                        dur 
+                                    },
                                 };
                                 self.media_library.push(asset);
                                 
@@ -1106,13 +1113,14 @@ fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
                  
                  if let Some(asset) = app.media_library.get(asset_idx) {
                      println!("DEBUG: Dropping asset {} at time {}", asset.name, drop_time);
-                     let asset_duration = asset.duration;
+                     println!("DEBUG: Dropping asset {} at time {}", asset.name, drop_time);
+                     let asset_duration = if asset.duration < 0.1 { 10.0 } else { asset.duration };
                      let clip_end = drop_time + asset_duration;
                      
                      app.clips.push(Clip {
                          asset_id: Some(asset_idx),
                          start: drop_time,
-                         end: clip_end,
+                         end: drop_time + asset_duration.max(5.0), // Ensure at least 5s length
                          fade_in: 0.0,
                          fade_out: 0.0,
                          linked: asset.kind == MediaType::Video,
