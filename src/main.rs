@@ -740,110 +740,107 @@ impl eframe::App for VideoEditorApp {
                 }
                 
                 ui.add_space(5.0);
-                egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(350.0)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
                     let mut added_clip = None;
                     let mut drag_started = None;
-                    
-                    // Display assets as thumbnail cards
-                    for (idx, asset) in self.media_library.iter().enumerate() {
-                        let _card_response = ui.vertical(|ui| {
-                            ui.set_min_width(160.0);
-                            
-                            // Thumbnail area (draggable)
-                            let thumb_size = egui::vec2(150.0, 84.0); // 16:9 aspect
-                            let (thumb_rect, thumb_response) = ui.allocate_exact_size(
-                                thumb_size,
-                                egui::Sense::click_and_drag()
-                            );
-                            
-                            // Draw thumbnail background
-                            ui.painter().rect_filled(
-                                thumb_rect,
-                                4.0,
-                                egui::Color32::from_gray(50)
-                            );
-                            
-                            // Draw thumbnail or icon
-                            if let Some(texture) = self.media_thumbs.get(&idx) {
-                                let tex_size = texture.size_vec2();
-                                // Scale to fit
-                                let scale = (thumb_size.x / tex_size.x).min(thumb_size.y / tex_size.y);
-                                let scaled = tex_size * scale;
-                                let offset = (thumb_size - scaled) * 0.5;
-                                let img_rect = egui::Rect::from_min_size(
-                                    thumb_rect.min + offset,
-                                    scaled
-                                );
-                                ui.painter().image(
-                                    texture.id(),
-                                    img_rect,
-                                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                                    egui::Color32::WHITE
-                                );
-                            } else {
-                                // Draw icon for audio or missing thumbnail
-                                let icon = match asset.kind {
-                                    MediaType::Video => "🎬",
-                                    MediaType::Audio => "🎵",
-                                    MediaType::Image => "🖼️",
-                                };
-                                ui.painter().text(
-                                    thumb_rect.center(),
-                                    egui::Align2::CENTER_CENTER,
-                                    icon,
-                                    egui::FontId::proportional(32.0),
-                                    egui::Color32::WHITE
-                                );
+
+                    // Use Grid for layout
+                    egui::Grid::new("library_grid")
+                        .spacing(egui::vec2(10.0, 10.0))
+                        .min_col_width(160.0)
+                        .striped(false)
+                        .show(ui, |ui| {
+                            let mut col = 0;
+                            // Calculate columns based on available width, fallback to 2
+                            let available_w = ui.available_width();
+                            let cols = (available_w / 170.0).floor().max(1.0) as usize; 
+
+                            for (idx, asset) in self.media_library.iter().enumerate() {
+                                if col >= cols {
+                                    ui.end_row();
+                                    col = 0;
+                                }
+                                col += 1;
+
+                                let _card_response = ui.vertical(|ui| {
+                                    ui.set_min_width(160.0);
+                                    
+                                    // Thumbnail area (draggable)
+                                    let thumb_size = egui::vec2(160.0, 90.0); // 16:9 aspect
+                                    let (thumb_rect, thumb_response) = ui.allocate_exact_size(
+                                        thumb_size,
+                                        egui::Sense::click_and_drag()
+                                    );
+                                    
+                                    // Draw card background
+                                    let bg_rect = thumb_rect.expand(2.0);
+                                    let hover = thumb_response.hovered();
+                                    ui.painter().rect_filled(
+                                        bg_rect,
+                                        4.0,
+                                        if hover { egui::Color32::from_gray(70) } else { egui::Color32::from_gray(40) }
+                                    );
+                                    
+                                    // Draw thumbnail
+                                    if let Some(texture) = self.media_thumbs.get(&idx) {
+                                         let tex_size = texture.size_vec2();
+                                         let scale = (thumb_size.x / tex_size.x).min(thumb_size.y / tex_size.y);
+                                         let scaled = tex_size * scale;
+                                         let offset = (thumb_size - scaled) * 0.5;
+                                         let img_rect = egui::Rect::from_min_size(thumb_rect.min + offset, scaled);
+                                         
+                                         ui.painter().image(
+                                            texture.id(),
+                                            img_rect,
+                                            egui::Rect::from_min_max(egui::pos2(0.0,0.0), egui::pos2(1.0,1.0)),
+                                            egui::Color32::WHITE
+                                         );
+                                    } else {
+                                        // Icon fallback
+                                        let icon = match asset.kind {
+                                            MediaType::Video => "🎬",
+                                            MediaType::Audio => "🎵",
+                                            MediaType::Image => "🖼️",
+                                        };
+                                        ui.painter().text(
+                                            thumb_rect.center(),
+                                            egui::Align2::CENTER_CENTER,
+                                            icon,
+                                            egui::FontId::proportional(32.0),
+                                            egui::Color32::WHITE
+                                        );
+                                    }
+
+                                    // Badge
+                                    let badge_text = match asset.kind {
+                                        MediaType::Video => "VIDEO",
+                                        MediaType::Audio => "AUDIO",
+                                        MediaType::Image => "IMAGE",
+                                    };
+                                    let badge_col = match asset.kind {
+                                        MediaType::Video => egui::Color32::from_rgb(66, 133, 244),
+                                        MediaType::Audio => egui::Color32::from_rgb(234, 67, 53),
+                                        MediaType::Image => egui::Color32::from_rgb(52, 168, 83),
+                                    };
+                                    let badge_rect = egui::Rect::from_min_size(thumb_rect.min + egui::vec2(4.0, 4.0), egui::vec2(36.0, 12.0));
+                                    ui.painter().rect_filled(badge_rect, 2.0, badge_col);
+                                    ui.painter().text(badge_rect.center(), egui::Align2::CENTER_CENTER, badge_text, egui::FontId::proportional(8.0), egui::Color32::WHITE);
+
+                                    // Interactivity
+                                    if thumb_response.drag_started() { drag_started = Some(idx); }
+                                    if thumb_response.double_clicked() { added_clip = Some(idx); }
+
+                                    // Name & Duration
+                                    ui.add_space(2.0);
+                                    let name = if asset.name.len() > 20 { format!("{}...", &asset.name[..17]) } else { asset.name.clone() };
+                                    ui.label(egui::RichText::new(name).size(11.0).strong());
+                                    ui.label(egui::RichText::new(format!("{:.1}s", asset.duration)).size(10.0).weak());
+                                });
                             }
-                            
-                            // Type badge
-                            let badge_text = match asset.kind {
-                                MediaType::Video => "VIDEO",
-                                MediaType::Audio => "AUDIO",
-                                MediaType::Image => "IMAGE",
-                            };
-                            let badge_color = match asset.kind {
-                                MediaType::Video => egui::Color32::from_rgb(66, 133, 244),
-                                MediaType::Audio => egui::Color32::from_rgb(234, 67, 53),
-                                MediaType::Image => egui::Color32::from_rgb(52, 168, 83),
-                            };
-                            let badge_rect = egui::Rect::from_min_size(
-                                thumb_rect.min + egui::vec2(4.0, 4.0),
-                                egui::vec2(40.0, 14.0)
-                            );
-                            ui.painter().rect_filled(badge_rect, 2.0, badge_color);
-                            ui.painter().text(
-                                badge_rect.center(),
-                                egui::Align2::CENTER_CENTER,
-                                badge_text,
-                                egui::FontId::proportional(8.0),
-                                egui::Color32::WHITE
-                            );
-                            
-                            // Handle drag start
-                            if thumb_response.drag_started() {
-                                drag_started = Some(idx);
-                            }
-                            
-                            // Handle double-click to add
-                            if thumb_response.double_clicked() {
-                                added_clip = Some(idx);
-                            }
-                            
-                            // Asset name (truncated)
-                            let name_display = if asset.name.len() > 18 {
-                                format!("{}...", &asset.name[..15])
-                            } else {
-                                asset.name.clone()
-                            };
-                            ui.label(egui::RichText::new(name_display).small());
-                            
-                            // Duration
-                            ui.label(egui::RichText::new(format!("{:.1}s", asset.duration)).small().weak());
                         });
-                        
-                        ui.add_space(4.0);
-                    }
                     
                     // Track drag state
                     if let Some(idx) = drag_started {
