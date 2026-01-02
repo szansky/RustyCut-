@@ -1,4 +1,9 @@
 use anyhow::{anyhow, Context, Result};
+
+mod types;
+mod ffmpeg;
+// mod i18n; 
+mod utils; 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use eframe::egui;
 use egui::load::SizedTexture;
@@ -6,6 +11,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{VecDeque, HashMap};
 use std::io::Read;
 use std::fs;
+use crate::types::*;
+use crate::ffmpeg::*;
+use crate::utils::*;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -50,8 +58,29 @@ fn main() -> Result<()> {
 }
 
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Language { En, Pl }
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+enum HwAccelMode {
+    #[default]
+    None,
+    Auto,
+    Cuda, // NVIDIA
+    Vaapi, // Intel/AMD (Linux)
+    VideoToolbox, // MacOS
+}
+
+impl std::fmt::Display for HwAccelMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HwAccelMode::None => write!(f, "None (CPU)"),
+            HwAccelMode::Auto => write!(f, "Auto"),
+            HwAccelMode::Cuda => write!(f, "CUDA (NVIDIA)"),
+            HwAccelMode::Vaapi => write!(f, "VAAPI (Linux)"),
+            HwAccelMode::VideoToolbox => write!(f, "VideoToolbox (Mac)"),
+        }
+    }
+}
+
+fn default_true() -> bool { true }
 
 #[allow(dead_code)]
 struct TextResources {
@@ -243,6 +272,10 @@ struct VideoEditorApp {
     show_settings: bool,
     language: Language,
     text: TextResources,
+    
+    // Media Library
+    media_library: Vec<MediaAsset>,
+    media_thumbs: HashMap<usize, egui::TextureHandle>, // ID -> Texture
 
     language_switch_start: Option<Instant>,
     status: String,
@@ -265,80 +298,9 @@ struct VideoEditorApp {
     hw_accel_mode: HwAccelMode,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-enum HwAccelMode {
-    #[default]
-    None,
-    Auto,
-    Cuda, // NVIDIA
-    Vaapi, // Intel/AMD (Linux)
-    VideoToolbox, // MacOS
-}
-
-impl std::fmt::Display for HwAccelMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            HwAccelMode::None => write!(f, "None (CPU)"),
-            HwAccelMode::Auto => write!(f, "Auto"),
-            HwAccelMode::Cuda => write!(f, "CUDA (NVIDIA)"),
-            HwAccelMode::Vaapi => write!(f, "VAAPI (Linux)"),
-            HwAccelMode::VideoToolbox => write!(f, "VideoToolbox (Mac)"),
-        }
-    }
-}
 
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-enum TrackType {
-    #[default]
-    Both,
-    Video,
-    Audio,
-}
 
-#[derive(Clone, Serialize, Deserialize)]
-struct Clip {
-    start: f32,
-    end: f32,
-    fade_in: f32,
-    fade_out: f32,
-    #[serde(default = "default_true")]
-    linked: bool,
-    #[serde(default = "default_true")]
-    video_enabled: bool,
-    #[serde(default = "default_true")]
-    audio_enabled: bool,
-}
-
-fn default_true() -> bool { true }
-
-#[derive(Serialize, Deserialize)]
-struct ProjectData {
-    input_path: String,
-    clips: Vec<Clip>,
-    duration: f32,
-    video_width: u32,
-    video_height: u32,
-    video_fps: f32,
-}
-
-#[derive(Clone, Copy)]
-enum FadeKind {
-    In,
-    Out,
-}
-
-#[derive(Clone, Copy)]
-struct FadeDrag {
-    clip_idx: usize,
-    kind: FadeKind,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Tool {
-    Hand,
-    Scissors,
-}
 
 impl eframe::App for VideoEditorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -606,6 +568,7 @@ impl eframe::App for VideoEditorApp {
                             if let (Some(start), Some(end)) = (self.mark_in, self.mark_out) {
                                 if end > start {
                                     self.clips.push(Clip {
+                                        asset_id: None,
                                         start,
                                         end,
                                         fade_in: 0.0,
@@ -656,24 +619,97 @@ impl eframe::App for VideoEditorApp {
                 ui.heading(&self.text.editor_title);
                 ui.separator();
 
-                ui.label(&self.text.input_file);
-                ui.horizontal(|ui| {
-                    ui.text_edit_singleline(&mut self.input_path);
-                    if ui.button("...").clicked() {
-                        if let Some(path) = rfd::FileDialog::new().pick_file() {
-                            self.input_path = path.display().to_string();
-                            self.prepare_media_assets(ctx);
-                        }
-                    }
+                ui.collapsing("Project Settings", |ui| {
+                     ui.label(&self.text.input_file);
+                     ui.horizontal(|ui| {
+                         ui.text_edit_singleline(&mut self.input_path);
+                         if ui.button("...").clicked() {
+                             if let Some(path) = rfd::FileDialog::new().pick_file() {
+                                 self.input_path = path.display().to_string();
+                                 self.prepare_media_assets(ctx);
+                             }
+                         }
+                     });
+
+                     ui.label(&self.text.output_file);
+                     ui.horizontal(|ui| {
+                         ui.text_edit_singleline(&mut self.output_path);
+                         if ui.button("...").clicked() {
+                             if let Some(path) = rfd::FileDialog::new().save_file() {
+                                 self.output_path = path.display().to_string();
+                             }
+                         }
+                     });
                 });
 
-                ui.label(&self.text.output_file);
-                ui.horizontal(|ui| {
-                    ui.text_edit_singleline(&mut self.output_path);
-                    if ui.button("...").clicked() {
-                        if let Some(path) = rfd::FileDialog::new().save_file() {
-                            self.output_path = path.display().to_string();
+                ui.separator();
+                ui.heading("Media Library");
+                if ui.button("📂 Import Media").clicked() {
+                    if let Some(paths) = rfd::FileDialog::new().pick_files() {
+                        for path in paths {
+                            let path_str = path.display().to_string();
+                            // Detect type using ffprobe logic or extension
+                            // For MVP, we use ffprobe. 
+                            if let Ok((dur, w, h, _fps)) = get_video_info_ffprobe(&path_str) {
+                                let kind = if w == 0 && h == 0 {
+                                    MediaType::Audio 
+                                } else if dur < 0.1 && (path_str.ends_with(".png") || path_str.ends_with(".jpg")) {
+                                    MediaType::Image
+                                } else {
+                                    MediaType::Video
+                                };
+                                
+                                let id = self.media_library.len() + 1; // 0 reserved? No, let's start at 0? 
+                                // Actually asset_id is Option<usize>. 
+                                // Let's use simple indexing for now, but safer to use ID.
+                                // Current logic: self.media_library index.
+                                let asset = MediaAsset {
+                                    id, 
+                                    path: path_str.clone(),
+                                    name: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
+                                    kind,
+                                    duration: if kind == MediaType::Image { 5.0 } else { dur },
+                                };
+                                self.media_library.push(asset);
+                            }
                         }
+                    }
+                }
+                
+                ui.add_space(5.0);
+                egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+                    let mut added_clip = None;
+                    for (idx, asset) in self.media_library.iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            let icon = match asset.kind {
+                                MediaType::Video => "🎬",
+                                MediaType::Audio => "🔊",
+                                MediaType::Image => "🖼️",
+                            };
+                            ui.label(icon);
+                            ui.label(egui::RichText::new(&asset.name).strong());
+                            if ui.button("➕").on_hover_text("Add to Timeline").clicked() {
+                                added_clip = Some(idx);
+                            }
+                        });
+                        ui.label(format!("Dur: {:.2}s", asset.duration));
+                        ui.separator();
+                    }
+                    
+                    if let Some(idx) = added_clip {
+                        let asset = &self.media_library[idx];
+                        self.clips.push(Clip {
+                            start: self.playhead,
+                            end: self.playhead + asset.duration,
+                            fade_in: 0.0,
+                            fade_out: 0.0,
+                            linked: asset.kind == MediaType::Video,
+                            video_enabled: asset.kind != MediaType::Audio,
+                            audio_enabled: asset.kind != MediaType::Image,
+                            asset_id: Some(idx), // Using index as ID for MVP
+                        });
+                        self.selected_clip = Some(self.clips.len() - 1);
+                        self.status = format!("Added clip: {}", asset.name);
                     }
                 });
 
@@ -690,6 +726,7 @@ impl eframe::App for VideoEditorApp {
                         if self.duration > 0.0 {
                             self.clips.clear();
                             self.clips.push(Clip {
+                                asset_id: None,
                                 start: 0.0,
                                 end: self.duration,
                                 fade_in: 0.0,
@@ -716,7 +753,7 @@ impl eframe::App for VideoEditorApp {
 
                 ui.separator();
                 if ui.button(&self.text.render_button).clicked() {
-                    match render_video(&self.input_path, &self.output_path, &self.clips) {
+                    match render_video(&self.input_path, &self.output_path, &self.clips, &self.media_library) {
                         Ok(()) => self.status = self.text.status_render_done.clone(),
                         Err(err) => self.status = format!("Blad: {err:#}"),
                     }
@@ -851,95 +888,7 @@ impl eframe::App for VideoEditorApp {
     }
 }
 
-fn render_video(input_path: &str, output_path: &str, clips: &[Clip]) -> Result<()> {
-    let input_path = Path::new(input_path);
-    let output_path = Path::new(output_path);
 
-    if clips.is_empty() {
-        return Err(anyhow!("Brak fragmentow do zlozenia."));
-    }
-    if !input_path.exists() {
-        return Err(anyhow!("Nie znaleziono pliku wejsciowego."));
-    }
-
-    let temp_dir = create_temp_dir().context("Nie mozna utworzyc katalogu tymczasowego")?;
-    let mut segment_paths = Vec::with_capacity(clips.len());
-
-    for (idx, clip) in clips.iter().enumerate() {
-        let segment_path = temp_dir.join(format!("segment_{idx}.mp4"));
-        let start = format!("{:.3}", clip.start);
-        let end = format!("{:.3}", clip.end);
-        let (vf, af) = build_fade_filters(clip);
-        let mut args = vec![
-            "-y",
-            "-ss",
-            start.as_str(),
-            "-to",
-            end.as_str(),
-            "-i",
-            input_path
-                .to_str()
-                .ok_or_else(|| anyhow!("Niepoprawna sciezka wejsciowa"))?,
-        ];
-        if let Some(filter) = &vf {
-            args.push("-vf");
-            args.push(filter);
-        }
-        if let Some(filter) = &af {
-            args.push("-af");
-            args.push(filter);
-        }
-        args.extend([
-            "-c:v",
-            "libx264",
-            "-preset",
-            "veryfast",
-            "-crf",
-            "18",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "192k",
-            segment_path
-                .to_str()
-                .ok_or_else(|| anyhow!("Niepoprawna sciezka segmentu"))?,
-        ]);
-        run_ffmpeg(&args)
-        .with_context(|| format!("Nie udalo sie wyciac segmentu {idx}"))?;
-        segment_paths.push(segment_path);
-    }
-
-    let list_path = temp_dir.join("concat_list.txt");
-    let mut list_contents = String::new();
-    for path in &segment_paths {
-        let escaped = path
-            .to_str()
-            .ok_or_else(|| anyhow!("Niepoprawna sciezka segmentu"))?
-            .replace('\'', "\\'");
-        list_contents.push_str(&format!("file '{}'\n", escaped));
-    }
-    fs::write(&list_path, list_contents).context("Nie mozna zapisac listy segmentow")?;
-
-    run_ffmpeg(&[
-        "-y",
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        list_path
-            .to_str()
-            .ok_or_else(|| anyhow!("Niepoprawna sciezka listy"))?,
-        "-c",
-        "copy",
-        output_path
-            .to_str()
-            .ok_or_else(|| anyhow!("Niepoprawna sciezka wyjsciowa"))?,
-    ])
-    .context("Nie udalo sie polaczyc segmentow")?;
-
-    Ok(())
-}
 
 fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
     let desired_height = 160.0;
@@ -1706,6 +1655,7 @@ fn split_clip_at(clips: &mut Vec<Clip>, idx: usize, t: f32) -> Option<usize> {
         return None;
     }
     let right = Clip {
+        asset_id: clip.asset_id,
         start: t,
         end: clip.end,
         fade_in: 0.0,
@@ -1720,153 +1670,8 @@ fn split_clip_at(clips: &mut Vec<Clip>, idx: usize, t: f32) -> Option<usize> {
     Some(idx + 1)
 }
 
-fn build_fade_filters(clip: &Clip) -> (Option<String>, Option<String>) {
-    let duration = (clip.end - clip.start).max(0.0);
-    if duration <= 0.0 {
-        return (None, None);
-    }
-    let mut fade_in = clip.fade_in.max(0.0);
-    let mut fade_out = clip.fade_out.max(0.0);
-    if fade_in + fade_out > duration {
-        let scale = duration / (fade_in + fade_out).max(0.001);
-        fade_in *= scale;
-        fade_out *= scale;
-    }
 
-    let mut vf_parts = Vec::new();
-    let mut af_parts = Vec::new();
-    if fade_in > 0.0 {
-        vf_parts.push(format!("fade=t=in:st=0:d={:.3}", fade_in));
-        af_parts.push(format!("afade=t=in:st=0:d={:.3}", fade_in));
-    }
-    if fade_out > 0.0 {
-        let start = (duration - fade_out).max(0.0);
-        vf_parts.push(format!("fade=t=out:st={:.3}:d={:.3}", start, fade_out));
-        af_parts.push(format!("afade=t=out:st={:.3}:d={:.3}", start, fade_out));
-    }
 
-    let vf = if vf_parts.is_empty() {
-        None
-    } else {
-        Some(vf_parts.join(","))
-    };
-    let af = if af_parts.is_empty() {
-        None
-    } else {
-        Some(af_parts.join(","))
-    };
-    (vf, af)
-}
-
-fn generate_frame_memory(input: &str, time: f32, width: u32, height: i32) -> Result<Vec<u8>> {
-    let width_str = if width == 0 { "-1".to_string() } else { width.to_string() };
-    let height_str = if height == 0 { "-1".to_string() } else { height.to_string() };
-    let time_str = format!("{:.3}", time.max(0.0));
-    let scale_str = format!("scale={width_str}:{height_str}");
-
-    let output = Command::new("ffmpeg")
-        .args([
-            "-y",
-            "-ss", &time_str,
-            "-i", input,
-            "-frames:v", "1",
-            "-vf", &scale_str,
-            "-f", "image2pipe",
-            "-vcodec", "png",
-            "-",
-        ])
-        .output()
-        .context("Nie mozna uruchomic ffmpeg dla frame memory")?;
-
-    if !output.status.success() {
-        return Err(anyhow!("ffmpeg frame error: {}", String::from_utf8_lossy(&output.stderr)));
-    }
-    Ok(output.stdout)
-}
-
-fn clamp_offset(offset: f32, duration: f32, window: f32) -> f32 {
-    if duration <= window {
-        0.0
-    } else {
-        offset.clamp(0.0, duration - window)
-    }
-}
-
-fn snap_time(time: f32, _zoom: f32) -> f32 {
-    time
-}
-
-fn run_ffmpeg(args: &[&str]) -> Result<()> {
-    let output = Command::new("ffmpeg")
-        .args(args)
-        .output()
-        .context("Nie mozna uruchomic ffmpeg (sprawdz PATH)")?;
-    if !output.status.success() {
-        return Err(anyhow!(
-            "ffmpeg zwrocil blad: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    Ok(())
-}
-
-fn create_temp_dir() -> Result<PathBuf> {
-    let base = std::env::temp_dir();
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-    let dir = base.join(format!("rust_editor_video_{nonce}"));
-    fs::create_dir_all(&dir)?;
-    Ok(dir)
-}
-
-fn get_video_info_ffprobe(path: &str) -> Result<(f32, u32, u32, f32)> {
-    if path.trim().is_empty() {
-        return Err(anyhow!("Brak pliku wejsciowego"));
-    }
-    let output = Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "format=duration:stream=width,height,r_frame_rate",
-            "-of",
-            "default=noprint_wrappers=1:nokey=0",
-            path,
-        ])
-        .output()
-        .context("Nie mozna uruchomic ffprobe (sprawdz PATH)")?;
-    if !output.status.success() {
-        return Err(anyhow!(
-            "ffprobe zwrocil blad: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut duration = None;
-    let mut width = None;
-    let mut height = None;
-    let mut fps = None;
-    for line in text.lines() {
-        if let Some(value) = line.strip_prefix("duration=") {
-            duration = value.trim().parse::<f32>().ok();
-        } else if let Some(value) = line.strip_prefix("width=") {
-            width = value.trim().parse::<u32>().ok();
-        } else if let Some(value) = line.strip_prefix("height=") {
-            height = value.trim().parse::<u32>().ok();
-        } else if let Some(value) = line.strip_prefix("r_frame_rate=") {
-            fps = parse_fps(value.trim());
-        }
-    }
-    let duration = duration.context("Nie mozna odczytac dlugosci")?;
-    let width = width.context("Nie mozna odczytac szerokosci")?;
-    let height = height.context("Nie mozna odczytac wysokosci")?;
-    let fps = fps.unwrap_or(30.0);
-    Ok((duration, width, height, fps))
-}
 
 impl VideoEditorApp {
     fn save_project_as(&mut self) {
@@ -1876,7 +1681,10 @@ impl VideoEditorApp {
         {
             let data = ProjectData {
                 input_path: self.input_path.clone(),
+                output_path: self.output_path.clone(),
+                playhead: self.playhead,
                 clips: self.clips.clone(),
+                media_library: self.media_library.clone(),
                 duration: self.duration,
                 video_width: self.video_width,
                 video_height: self.video_height,
@@ -1906,25 +1714,44 @@ impl VideoEditorApp {
                 match serde_json::from_str::<ProjectData>(&content) {
                     Ok(data) => {
                         self.input_path = data.input_path;
+                        self.output_path = data.output_path;
                         self.clips = data.clips;
+                        self.media_library = data.media_library;
                         self.duration = data.duration;
                         self.video_width = data.video_width;
                         self.video_height = data.video_height;
                         self.video_fps = data.video_fps;
+                        self.playhead = data.playhead;
                         
                         // Reset stanu UI
-                        self.playhead = 0.0;
                         self.selected_clip = None;
                         self.stop_playback();
                         
                         // Przywrocenie zasobow (podglady, waveform)
                         if !self.input_path.is_empty() {
-                            // Tutaj musimy byc ostrozni, bo prepare_media_assets resetuje clips.
-                            // Ale w mojej implementacji prepare_media_assets resetuje clips TYLKO jesli byly puste.
-                            // Sprawdzmy to.
-                            // W aktualnym kodzie: if self.clips.is_empty() ...
-                            // Zatem jesli wczytamy clips, to prepare_media_assets ich nie usunie.
                             self.prepare_media_assets(ctx);
+                        }
+                        
+                        // Regeneracja miniatur biblioteki
+                        self.media_thumbs.clear();
+                        for (idx, asset) in self.media_library.iter().enumerate() {
+                             let mut thumb = None;
+                             let path = Path::new(&asset.path);
+                             if asset.kind == MediaType::Image {
+                                 if let Ok(t) = load_texture_from_path(ctx, path, &format!("thumb_{}", idx)) {
+                                     thumb = Some(t);
+                                 }
+                             } else {
+                                 // Video thumb
+                                 if let Ok(data) = generate_frame_memory(&asset.path, asset.duration * 0.1, 128, 0) { 
+                                     if let Ok(t) = load_texture_from_memory(ctx, &data, &format!("thumb_{}", idx)) {
+                                         thumb = Some(t);
+                                     }
+                                 }
+                             }
+                             if let Some(t) = thumb {
+                                 self.media_thumbs.insert(idx, t); 
+                             }
                         }
                         self.status = "Projekt wczytany.".to_string();
                     }
@@ -1984,6 +1811,7 @@ impl VideoEditorApp {
                 self.mark_out = None;
                 if self.clips.is_empty() && self.duration > 0.0 {
                     self.clips.push(Clip {
+                        asset_id: None,
                         start: 0.0,
                         end: self.duration,
                         fade_in: 0.0,
@@ -2067,8 +1895,11 @@ impl VideoEditorApp {
         
         let busy = self.preview_busy.clone();
         let tx = self.preview_tx.clone();
-        let input = self.input_path.clone();
-        let time = self.playhead;
+        // Resolve source!
+        // We need access to clips... but we are moving 'self' fields into closure.
+        // Complex. Thread needs the path.
+        // We can resolve BEFORE spawning.
+        let (input, time) = self.resolve_clip_source(self.playhead);
         
         // Ustawiamy flage busy
         busy.store(true, Ordering::Relaxed);
@@ -2097,10 +1928,35 @@ impl VideoEditorApp {
         Ok(())
     }
 
+    fn resolve_clip_source(&self, time: f32) -> (String, f32) {
+        for (idx, clip) in self.clips.iter().enumerate() {
+            if clip.video_enabled && time >= clip.start && time < clip.end {
+                let local_time = time - clip.start;
+                // Fade in/out logic might be here but for source we just need path
+                if let Some(asset_id) = clip.asset_id {
+                    // Find asset in library (by index for MVP, assuming valid)
+                     if let Some(asset) = self.media_library.get(asset_id) {
+                         if asset.kind == MediaType::Video || asset.kind == MediaType::Image {
+                             return (asset.path.clone(), local_time);
+                         }
+                     }
+                }
+                // Fallback to input_path if no asset_id (legacy clip)
+                if clip.asset_id.is_none() {
+                     return (self.input_path.clone(), time); // Main video uses global time? No, main video clip usually 0..duration.
+                }
+            }
+        }
+        // If no clip found, return input_path and time? Or empty?
+        // Default behavior: show input_path at time.
+        (self.input_path.clone(), time)
+    }
+
     fn build_preview(&mut self, ctx: &egui::Context) -> Result<()> {
-        // Nie potrzebujemy juz pliku tymczasowego do preview
-        // Generujemy PNG w pamieci (scale=640:-1)
-        let data = generate_frame_memory(&self.input_path, self.playhead, 640, 0)?;
+        let (path, local_time) = self.resolve_clip_source(self.playhead);
+        if path.is_empty() { return Ok(()); }
+        
+        let data = generate_frame_memory(&path, local_time, 640, 0)?;
         let texture = load_texture_from_memory(ctx, &data, "preview")?;
         self.preview_texture = Some(texture);
         Ok(())
@@ -2138,7 +1994,8 @@ impl VideoEditorApp {
         
         // Wstępne załadowanie pierwszej ramki (instant preview)
         let (width, height) = scaled_preview_size(self.video_width, self.video_height, 640);
-        if let Ok(frame_data) = generate_frame_memory(&self.input_path, self.playhead, width, height as i32) {
+        let (start_input, start_time) = self.resolve_clip_source(self.playhead);
+        if let Ok(frame_data) = generate_frame_memory(&start_input, start_time, width, height as i32) {
             if let Ok(image) = image::load_from_memory(&frame_data) {
                 let rgba = image.to_rgba8();
                 let size = [rgba.width() as usize, rgba.height() as usize];
@@ -2590,78 +2447,7 @@ impl VideoEditorApp {
     }
 }
 
-fn generate_waveform(input: &str, output: &Path) -> Result<()> {
-    run_ffmpeg(&[
-        "-y",
-        "-i",
-        input,
-        "-filter_complex",
-        "aformat=channel_layouts=mono,showwavespic=s=1000x120:colors=white",
-        "-frames:v",
-        "1",
-        output
-            .to_str()
-            .ok_or_else(|| anyhow!("Niepoprawna sciezka waveform"))?,
-    ])
-}
 
-fn parse_fps(value: &str) -> Option<f32> {
-    if let Some((num, den)) = value.split_once('/') {
-        let n: f32 = num.parse().ok()?;
-        let d: f32 = den.parse().ok()?;
-        if d != 0.0 {
-            return Some(n / d);
-        }
-        return None;
-    }
-    value.parse::<f32>().ok()
-}
-
-fn load_texture_from_path(
-    ctx: &egui::Context,
-    path: &Path,
-    name: &str,
-) -> Result<egui::TextureHandle> {
-    let img = image::open(path).context("Nie mozna otworzyc obrazu")?;
-    let size = [img.width() as usize, img.height() as usize];
-    let rgba = img.to_rgba8();
-    let pixels = rgba.into_raw();
-    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
-    Ok(ctx.load_texture(
-        name,
-        color_image,
-        egui::TextureOptions::LINEAR,
-    ))
-}
-
-fn load_texture_from_memory(
-    ctx: &egui::Context,
-    data: &[u8],
-    name: &str,
-) -> Result<egui::TextureHandle> {
-    let img = image::load_from_memory(data).context("Nie mozna odkodowac obrazu z pamieci")?;
-    let size = [img.width() as usize, img.height() as usize];
-    let rgba = img.to_rgba8();
-    let pixels = rgba.into_raw();
-    let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
-    Ok(ctx.load_texture(
-        name,
-        color_image,
-        egui::TextureOptions::LINEAR,
-    ))
-}
-
-fn scaled_preview_size(width: u32, height: u32, max_width: u32) -> (u32, u32) {
-    if width == 0 || height == 0 {
-        return (max_width, max_width * 9 / 16);
-    }
-    if width <= max_width {
-        return (width, height);
-    }
-    let new_width = max_width;
-    let new_height = ((height as f32) * (new_width as f32) / (width as f32)).round() as u32;
-    (new_width, new_height.max(1))
-}
 
 impl Default for VideoEditorApp {
     fn default() -> Self {
@@ -2714,6 +2500,9 @@ impl Default for VideoEditorApp {
             show_settings: false,
             language: Language::En,
             text: TextResources::new(Language::En),
+            
+            media_library: Vec::new(),
+            media_thumbs: HashMap::new(),
             language_switch_start: None,
             status: String::new(),
             preview_rx: rx,

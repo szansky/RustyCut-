@@ -22,6 +22,7 @@ The project is currently in **Open Beta**. We focus on performance, minimalism, 
 *   **🎬 Live Fading:** Real-time preview of Fade In/Out effects (even while scrubbing!).
 *   **🖥️ Modern UI:** Dark theme, two-column layout, and dockable panels.
 *   **📂 Project System:** Save and resume work thanks to the `.rev` (JSON) format.
+*   **📦 Media Library:** Import and organize multiple video, audio, and image assets.
 
 ## 🛠️ Requirements
 

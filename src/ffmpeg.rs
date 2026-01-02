@@ -5,7 +5,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::fs;
 
-use crate::types::Clip;
+use crate::types::{Clip, MediaAsset, MediaType};
 
 /// Uruchamia FFmpeg z podanymi argumentami
 pub fn run_ffmpeg(args: &[&str]) -> Result<()> {
@@ -142,7 +142,7 @@ pub fn build_fade_filters(clip: &Clip) -> (Option<String>, Option<String>) {
 }
 
 /// Renderuje wideo na podstawie listy klipów
-pub fn render_video(input_path: &str, output_path: &str, clips: &[Clip]) -> Result<()> {
+pub fn render_video(input_path: &str, output_path: &str, clips: &[Clip], assets: &[MediaAsset]) -> Result<()> {
     if clips.is_empty() {
         return Err(anyhow!("Brak klipow do renderowania"));
     }
@@ -160,13 +160,37 @@ pub fn render_video(input_path: &str, output_path: &str, clips: &[Clip]) -> Resu
         
         let (vf, af) = build_fade_filters(clip);
         
+        let (clip_input, is_image) = if let Some(asset_id) = clip.asset_id {
+            if let Some(asset) = assets.get(asset_id) { // Assuming index based ID for MVP match
+                 (asset.path.as_str(), asset.kind == MediaType::Image)
+            } else {
+                 (input_path, false)
+            }
+        } else {
+            (input_path, false)
+        };
+
         let mut args: Vec<String> = vec![
             "-y".into(),
             "-hwaccel".into(), "auto".into(),
-            "-ss".into(), format!("{:.3}", clip.start),
-            "-t".into(), format!("{:.3}", duration),
-            "-i".into(), input_path.into(),
         ];
+
+        if is_image {
+             args.push("-loop".into());
+             args.push("1".into());
+             // Image don't have start time in file usually
+             // But we might need -t before input? No, -t is after input for limiting duration usually?
+             // Actually for -loop 1, input is infinite. -t limits output read.
+             // -ss is irrelevant.
+        } else {
+             args.push("-ss".into());
+             args.push(format!("{:.3}", clip.start));
+        }
+
+        args.push("-t".into());
+        args.push(format!("{:.3}", duration));
+        args.push("-i".into());
+        args.push(clip_input.into());
 
         if let Some(vf_str) = vf {
             args.push("-vf".into());
