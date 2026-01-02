@@ -1789,37 +1789,39 @@ fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
 
     // Handle library asset drop onto timeline
     if let Some(asset_idx) = app.dragging_library_asset {
-        // Check if pointer is over timeline area (video_rect or audio_rect)
-        let in_timeline = video_rect.contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default())
-            || audio_rect.contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default());
+        // Get pointer position (use latest_pos for reliability)
+        let pointer_pos = ui.input(|i| i.pointer.latest_pos()).unwrap_or_default();
         
-        // Check if drag was released
-        if !ui.input(|i| i.pointer.any_down()) {
+        // Check if pointer is over timeline area (video_rect or audio_rect)
+        let in_timeline = video_rect.contains(pointer_pos) || audio_rect.contains(pointer_pos);
+        
+        // Check if drag was released (any_released is true on the frame the button is released)
+        let released = ui.input(|i| i.pointer.any_released());
+        
+        if released {
             if in_timeline {
                 // Calculate drop time position
-                if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
-                    let drop_time = app.timeline_offset + ((pos.x - left) / app.timeline_zoom).clamp(0.0, window);
+                let drop_time = app.timeline_offset + ((pointer_pos.x - left) / app.timeline_zoom).clamp(0.0, window);
+                
+                // Create clip from the dragged asset
+                if let Some(asset) = app.media_library.get(asset_idx) {
+                    let asset_duration = asset.duration;
+                    let asset_kind = asset.kind;
+                    let asset_name = asset.name.clone();
                     
-                    // Create clip from the dragged asset
-                    if let Some(asset) = app.media_library.get(asset_idx) {
-                        let asset_duration = asset.duration;
-                        let asset_kind = asset.kind;
-                        let asset_name = asset.name.clone();
-                        
-                        app.clips.push(Clip {
-                            asset_id: Some(asset_idx),
-                            start: drop_time,
-                            end: drop_time + asset_duration,
-                            fade_in: 0.0,
-                            fade_out: 0.0,
-                            linked: asset_kind == MediaType::Video,
-                            video_enabled: asset_kind != MediaType::Audio,
-                            audio_enabled: asset_kind != MediaType::Image,
-                        });
-                        app.selected_clip = Some(app.clips.len() - 1);
-                        app.status = format!("Dropped: {} at {:.2}s", asset_name, drop_time);
-                        changed = true;
-                    }
+                    app.clips.push(Clip {
+                        asset_id: Some(asset_idx),
+                        start: drop_time,
+                        end: drop_time + asset_duration,
+                        fade_in: 0.0,
+                        fade_out: 0.0,
+                        linked: asset_kind == MediaType::Video,
+                        video_enabled: asset_kind != MediaType::Audio,
+                        audio_enabled: asset_kind != MediaType::Image,
+                    });
+                    app.selected_clip = Some(app.clips.len() - 1);
+                    app.status = format!("Dropped: {} at {:.2}s", asset_name, drop_time);
+                    changed = true;
                 }
             }
             // Always clear the drag state when mouse released
