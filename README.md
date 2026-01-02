@@ -1,58 +1,58 @@
 # RustyCut 🦀✂️
 
-**RustyCut** to nowoczesny, lekki i szybki edytor wideo napisany w języku **Rust**, wykorzystujący moc **FFmpeg**. 
+**RustyCut** is a modern, lightweight, and fast video editor written in **Rust**, leveraging the power of **FFmpeg**.
 
-Projekt jest obecnie w fazie **Open Beta**. Stawiamy na wydajność, minimalizm i profesjonalny workflow (inspirowany DaVinci Resolve).
+The project is currently in **Open Beta**. We focus on performance, minimalism, and a professional workflow (inspired by DaVinci Resolve).
 
 ![RustyCut Preview](https://via.placeholder.com/800x450.png?text=RustyCut+Screenshot+Here)
 
-## 🆕 Ostatnie Zmiany (Update 0.2.0)
+## 🆕 Recent Updates (v0.2.0)
 
-*   **Smart Playback:** Płynne odtwarzanie mimo luk na osi czasu (Auto-Black & Silence) - brak zacięć!
-*   **Bezpieczny Blade Tool:** Blokada przesuwania klipów podczas używania narzędzia cięcia (zapobiega przypadkowym ruchom).
-*   **Pełna Lokalizacja:** 100% wsparcia dla PL/EN (w tym komunikaty błędów, puste stany i modale).
-*   **UX Improvements:** Poprawione centrowanie okien i responsywność interfejsu.
+*   **Smart Playback:** Smooth playback despite timeline gaps (Auto-Black & Silence) - no stuttering!
+*   **Safe Blade Tool:** Clip dragging is disabled when using the cut tool (prevents accidental moves).
+*   **Full Localization:** 100% support for PL/EN (including error messages, empty states, and modals).
+*   **UX Improvements:** Improved window centering and interface responsiveness.
 
-## ✨ Główne Funkcje
+## ✨ Key Features
 
-*   **🚀 Wydajność Rusta:** Błyskawiczne działanie bez zbędnego narzutu.
-*   **✂️ Blade Mode (Narzędzie Cięcia):** Precyzyjne cięcie klipów z unikalnym kursorem "Razor". Skrót klawiszowy: `B`.
-*   **🌊 Ripple Delete:** Inteligentne usuwanie klipów z automatycznym przesuwaniem pozostałych elementów (zamykanie luk).
-*   **🔊 Audio Masking:** Automatyczne wyciszanie dźwięku w lukach między klipami.
-*   **🎬 Live Fading:** Podgląd efektów Fade In/Out w czasie rzeczywistym (nawet podczas przewijania!).
-*   **🖥️ Nowoczesny UI:** Ciemny motyw, dwukolumnowy układ i dokowalne panele.
-*   **📂 System Projektów:** Zapisz i wznów pracę dzięki formatowi `.rev` (JSON).
+*   **🚀 Rust Performance:** Blazing fast performance with no unnecessary overhead.
+*   **✂️ Blade Mode:** Precise clip cutting with a unique "Razor" cursor. Keyboard shortcut: `B`.
+*   **🌊 Ripple Delete:** Intelligent clip removal that automatically shifts remaining elements (closes gaps).
+*   **🔊 Audio Masking:** Automatic audio silencing in gaps between clips.
+*   **🎬 Live Fading:** Real-time preview of Fade In/Out effects (even while scrubbing!).
+*   **🖥️ Modern UI:** Dark theme, two-column layout, and dockable panels.
+*   **📂 Project System:** Save and resume work thanks to the `.rev` (JSON) format.
 
-## 🛠️ Wymagania
+## 🛠️ Requirements
 
-*   **Rust** (najnowsza wersja stable)
-*   **FFmpeg** (zainstalowany i dostępny w zmiennej środowiskowej `PATH`)
+*   **Rust** (latest stable version)
+*   **FFmpeg** (installed and available in the `PATH` environment variable)
 
-## 🚀 Jak uruchomić?
+## 🚀 How to Run?
 
-1.  Sklonuj repozytorium:
+1.  Clone the repository:
     ```bash
     git clone https://github.com/szansky/RustyCut-.git
     cd RustyCut-
     ```
 
-2.  Uruchom projekt:
+2.  Run the project:
     ```bash
     cargo run
     ```
 
-## ⌨️ Skróty Klawiszowe
+## ⌨️ Keyboard Shortcuts
 
-| Klawisz | Akcja |
+| Key | Action |
 | :--- | :--- |
 | `Space` | Play / Stop |
-| `A` | Tryb Wyboru (Hand Tool) |
-| `B` | Tryb Cięcia (Blade Tool) |
-| `PPM` | Menu kontekstowe (na klipie) |
+| `A` | Selection Mode (Hand Tool) |
+| `B` | Cut Mode (Blade Tool) |
+| `RMB` | Context Menu (on clip) |
 
-## 🤝 Kontrybucja
+## 🤝 Contribution
 
-To projekt Open Source! Zapraszamy do zgłaszania błędów (Issues) i przesyłania poprawek (Pull Requests).
+This is an Open Source project! We welcome Issue reports and Pull Requests.
 
 ---
 *RustyCut - Made with ❤️ in Rust.*
