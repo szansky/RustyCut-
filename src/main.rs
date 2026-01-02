@@ -1081,6 +1081,69 @@ fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
     let right = rect.right() - 8.0;
     let width = (right - left).max(1.0);
 
+    // Unified Drop Handling (handles both empty and non-empty timeline)
+    if let Some(asset_idx) = app.dragging_library_asset {
+         let pointer_pos = ui.input(|i| i.pointer.latest_pos()).unwrap_or_default();
+         // Check if pointer is over the timeline rect
+         if rect.contains(pointer_pos) {
+             // Visual highlight
+             if ui.input(|i| i.pointer.any_down()) {
+                 painter.rect_stroke(
+                     rect,
+                     4.0,
+                     egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 200, 100)),
+                 );
+             }
+             
+             // Check release
+             if ui.input(|i| i.pointer.any_released()) {
+                 let window = width / app.timeline_zoom;
+                 let drop_time = if app.duration > 0.0 {
+                     app.timeline_offset + ((pointer_pos.x - left) / app.timeline_zoom).clamp(0.0, window)
+                 } else {
+                     0.0
+                 };
+                 
+                 if let Some(asset) = app.media_library.get(asset_idx) {
+                     println!("DEBUG: Dropping asset {} at time {}", asset.name, drop_time);
+                     let asset_duration = asset.duration;
+                     let clip_end = drop_time + asset_duration;
+                     
+                     app.clips.push(Clip {
+                         asset_id: Some(asset_idx),
+                         start: drop_time,
+                         end: clip_end,
+                         fade_in: 0.0,
+                         fade_out: 0.0,
+                         linked: asset.kind == MediaType::Video,
+                         video_enabled: asset.kind != MediaType::Audio,
+                         audio_enabled: asset.kind != MediaType::Image,
+                     });
+                     app.selected_clip = Some(app.clips.len() - 1);
+                     
+                     // Extend duration if needed
+                     if clip_end > app.duration {
+                        app.duration = clip_end;
+                     }
+                     // If first video, set dimensions
+                     if (asset.kind == MediaType::Video || asset.kind == MediaType::Image) && (app.video_width == 0 || app.video_height == 0) {
+                        if let Ok((_, w, h, fps)) = get_video_info_ffprobe(&asset.path) {
+                             app.video_width = w;
+                             app.video_height = h;
+                             if fps > 0.0 {
+                                app.video_fps = fps;
+                             }
+                        }
+                     }
+                     
+                     app.status = format!("Dropped: {}", asset.name);
+                     app.dragging_library_asset = None;
+                     return true; // Input handled, return true
+                 }
+             }
+         }
+    }
+
     if app.duration <= 0.0 {
         painter.text(
             rect.center(),
@@ -1089,63 +1152,6 @@ fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
             egui::TextStyle::Body.resolve(ui.style()),
             egui::Color32::from_gray(160),
         );
-        
-        // Handle library asset drop even when timeline is empty
-        if let Some(asset_idx) = app.dragging_library_asset {
-            let pointer_pos = ui.input(|i| i.pointer.latest_pos()).unwrap_or_default();
-            let in_timeline = rect.contains(pointer_pos);
-            let released = ui.input(|i| i.pointer.any_released());
-            
-            if released {
-                if in_timeline {
-                    // Create clip at time 0.0 on empty timeline
-                    if let Some(asset) = app.media_library.get(asset_idx) {
-                        let asset_duration = asset.duration;
-                        let asset_kind = asset.kind;
-                        let asset_name = asset.name.clone();
-                        let asset_path = asset.path.clone();
-                        
-                        app.clips.push(Clip {
-                            asset_id: Some(asset_idx),
-                            start: 0.0,
-                            end: asset_duration,
-                            fade_in: 0.0,
-                            fade_out: 0.0,
-                            linked: asset_kind == MediaType::Video,
-                            video_enabled: asset_kind != MediaType::Audio,
-                            audio_enabled: asset_kind != MediaType::Image,
-                        });
-                        app.selected_clip = Some(app.clips.len() - 1);
-                        app.duration = asset_duration;
-                        
-                        // Set video dimensions
-                        if asset_kind == MediaType::Video || asset_kind == MediaType::Image {
-                            if let Ok((_, w, h, fps)) = get_video_info_ffprobe(&asset_path) {
-                                app.video_width = w;
-                                app.video_height = h;
-                                if fps > 0.0 {
-                                    app.video_fps = fps;
-                                }
-                            }
-                        }
-                        
-                        app.status = format!("Dropped: {} (new project)", asset_name);
-                    }
-                }
-                app.dragging_library_asset = None;
-                return true; // changed
-            }
-            
-            // Visual feedback for empty timeline
-            if in_timeline && ui.input(|i| i.pointer.any_down()) {
-                painter.rect_stroke(
-                    rect,
-                    4.0,
-                    egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 200, 100)),
-                );
-            }
-        }
-        
         return false;
     }
 
@@ -1884,76 +1890,6 @@ fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
         }
     }
 
-    // Handle library asset drop onto timeline
-    if let Some(asset_idx) = app.dragging_library_asset {
-        // Get pointer position (use latest_pos for reliability)
-        let pointer_pos = ui.input(|i| i.pointer.latest_pos()).unwrap_or_default();
-        
-        // Check if pointer is over timeline area (video_rect or audio_rect)
-        let in_timeline = video_rect.contains(pointer_pos) || audio_rect.contains(pointer_pos);
-        
-        // Check if drag was released (any_released is true on the frame the button is released)
-        let released = ui.input(|i| i.pointer.any_released());
-        
-        if released {
-            if in_timeline {
-                // Calculate drop time position
-                let drop_time = app.timeline_offset + ((pointer_pos.x - left) / app.timeline_zoom).clamp(0.0, window);
-                
-                // Create clip from the dragged asset
-                if let Some(asset) = app.media_library.get(asset_idx) {
-                    let asset_duration = asset.duration;
-                    let asset_kind = asset.kind;
-                    let asset_name = asset.name.clone();
-                    let clip_end = drop_time + asset_duration;
-                    
-                    app.clips.push(Clip {
-                        asset_id: Some(asset_idx),
-                        start: drop_time,
-                        end: clip_end,
-                        fade_in: 0.0,
-                        fade_out: 0.0,
-                        linked: asset_kind == MediaType::Video,
-                        video_enabled: asset_kind != MediaType::Audio,
-                        audio_enabled: asset_kind != MediaType::Image,
-                    });
-                    app.selected_clip = Some(app.clips.len() - 1);
-                    
-                    // Auto-extend duration if the new clip exceeds it
-                    if clip_end > app.duration {
-                        app.duration = clip_end;
-                    }
-                    
-                    // If this is first video, set video dimensions
-                    if asset_kind == MediaType::Video || asset_kind == MediaType::Image {
-                        if app.video_width == 0 || app.video_height == 0 {
-                            if let Ok((_, w, h, fps)) = get_video_info_ffprobe(&asset.path) {
-                                app.video_width = w;
-                                app.video_height = h;
-                                if fps > 0.0 {
-                                    app.video_fps = fps;
-                                }
-                            }
-                        }
-                    }
-                    
-                    app.status = format!("Dropped: {} at {:.2}s", asset_name, drop_time);
-                    changed = true;
-                }
-            }
-            // Always clear the drag state when mouse released
-            app.dragging_library_asset = None;
-        }
-        
-        // Visual feedback: highlight timeline when dragging over it
-        if in_timeline && ui.input(|i| i.pointer.any_down()) {
-            painter.rect_stroke(
-                video_rect.union(audio_rect),
-                4.0,
-                egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 200, 100)),
-            );
-        }
-    }
 
     changed
 }
