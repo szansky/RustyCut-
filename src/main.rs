@@ -818,18 +818,42 @@ impl eframe::App for VideoEditorApp {
                     
                     if let Some(idx) = added_clip {
                         let asset = &self.media_library[idx];
+                        let clip_end = self.playhead + asset.duration;
+                        let asset_path = asset.path.clone();
+                        let asset_kind = asset.kind;
+                        let asset_name = asset.name.clone();
+                        
                         self.clips.push(Clip {
                             start: self.playhead,
-                            end: self.playhead + asset.duration,
+                            end: clip_end,
                             fade_in: 0.0,
                             fade_out: 0.0,
-                            linked: asset.kind == MediaType::Video,
-                            video_enabled: asset.kind != MediaType::Audio,
-                            audio_enabled: asset.kind != MediaType::Image,
+                            linked: asset_kind == MediaType::Video,
+                            video_enabled: asset_kind != MediaType::Audio,
+                            audio_enabled: asset_kind != MediaType::Image,
                             asset_id: Some(idx),
                         });
                         self.selected_clip = Some(self.clips.len() - 1);
-                        self.status = format!("Added clip: {}", asset.name);
+                        
+                        // Auto-extend duration if the new clip exceeds it
+                        if clip_end > self.duration {
+                            self.duration = clip_end;
+                        }
+                        
+                        // If this is first video, set video dimensions
+                        if asset_kind == MediaType::Video || asset_kind == MediaType::Image {
+                            if self.video_width == 0 || self.video_height == 0 {
+                                if let Ok((_, w, h, fps)) = get_video_info_ffprobe(&asset_path) {
+                                    self.video_width = w;
+                                    self.video_height = h;
+                                    if fps > 0.0 {
+                                        self.video_fps = fps;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        self.status = format!("Added clip: {}", asset_name);
                     }
                 });
                 
@@ -1819,11 +1843,12 @@ fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
                     let asset_duration = asset.duration;
                     let asset_kind = asset.kind;
                     let asset_name = asset.name.clone();
+                    let clip_end = drop_time + asset_duration;
                     
                     app.clips.push(Clip {
                         asset_id: Some(asset_idx),
                         start: drop_time,
-                        end: drop_time + asset_duration,
+                        end: clip_end,
                         fade_in: 0.0,
                         fade_out: 0.0,
                         linked: asset_kind == MediaType::Video,
@@ -1831,6 +1856,25 @@ fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
                         audio_enabled: asset_kind != MediaType::Image,
                     });
                     app.selected_clip = Some(app.clips.len() - 1);
+                    
+                    // Auto-extend duration if the new clip exceeds it
+                    if clip_end > app.duration {
+                        app.duration = clip_end;
+                    }
+                    
+                    // If this is first video, set video dimensions
+                    if asset_kind == MediaType::Video || asset_kind == MediaType::Image {
+                        if app.video_width == 0 || app.video_height == 0 {
+                            if let Ok((_, w, h, fps)) = get_video_info_ffprobe(&asset.path) {
+                                app.video_width = w;
+                                app.video_height = h;
+                                if fps > 0.0 {
+                                    app.video_fps = fps;
+                                }
+                            }
+                        }
+                    }
+                    
                     app.status = format!("Dropped: {} at {:.2}s", asset_name, drop_time);
                     changed = true;
                 }
