@@ -3,7 +3,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use eframe::egui;
 use egui::load::SizedTexture;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashMap};
 use std::io::Read;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,11 +15,32 @@ use std::sync::{
     Arc, Mutex, atomic::AtomicU64,
 };
 use std::thread;
+use std::sync::mpsc;
+
+fn load_icon() -> egui::IconData {
+    let (icon_rgba, icon_width, icon_height) = {
+        let image = image::load_from_memory(include_bytes!("../icon.png"))
+            .expect("Failed to open icon")
+            .into_rgba8();
+        let (width, height) = image.dimensions();
+        let rgba = image.into_raw();
+        (rgba, width, height)
+    };
+    
+    egui::IconData {
+        rgba: icon_rgba,
+        width: icon_width,
+        height: icon_height,
+    }
+}
 
 fn main() -> Result<()> {
-    let options = eframe::NativeOptions::default();
+    let mut options = eframe::NativeOptions::default();
+    // Set icon
+    options.viewport.icon = Some(Arc::new(load_icon()));
+    
     if let Err(err) = eframe::run_native(
-        "Rust Video Editor (Simple)",
+        "RustyCut",
         options,
         Box::new(|_cc| Box::new(VideoEditorApp::default())),
     ) {
@@ -27,6 +48,153 @@ fn main() -> Result<()> {
     }
     Ok(())
 }
+
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Language { En, Pl }
+
+#[allow(dead_code)]
+struct TextResources {
+    // Menu
+    file_menu: String,
+    new_project: String,
+    open_project: String,
+    save_project: String,
+    // Timeline
+    timeline_label: String,
+    mark_in: String,
+    mark_out: String,
+    add_clip: String,
+    split_clip: String,
+    remove_clip: String,
+    // Tools
+    editor_title: String,
+    input_file: String,
+    output_file: String,
+    duration_label: String,
+    auto_ffprobe: String,
+    create_full_clip: String,
+    tools_label: String,
+    tool_hand: String,
+    tool_scissors: String,
+    live_preview: String,
+    ripple_delete: String,
+    render_button: String,
+    // Status
+    status_ready: String,
+    status_render_done: String,
+    status_new_project: String,
+    status_project_loaded: String,
+    status_project_saved: String,
+    // Errors
+    err_mark_out_greater: String,
+    err_set_marks: String,
+    err_playhead_inside: String,
+    err_select_clip: String,
+    err_set_duration: String,
+    err_clip_boundary: String,
+    err_no_clip_cursor: String,
+    // Loading
+    loading_change_lang: String,
+    // Settings
+    settings_title: String,
+    language_label: String,
+    // Generic
+    no_preview: String,
+    no_duration: String,
+}
+
+
+impl TextResources {
+    fn new(lang: Language) -> Self {
+        match lang {
+            Language::En => Self {
+                file_menu: "File".to_owned(),
+                new_project: "New Project".to_owned(),
+                open_project: "Open Project...".to_owned(),
+                save_project: "Save Project As...".to_owned(),
+                timeline_label: "Timeline:".to_owned(),
+                mark_in: "Mark In".to_owned(),
+                mark_out: "Mark Out".to_owned(),
+                add_clip: "Add Clip".to_owned(),
+                split_clip: "Split Clip".to_owned(),
+                remove_clip: "Remove Clip".to_owned(),
+                editor_title: "Video Editor".to_owned(),
+                input_file: "Input File:".to_owned(),
+                output_file: "Output File:".to_owned(),
+                duration_label: "Duration (s):".to_owned(),
+                auto_ffprobe: "Auto (ffprobe)".to_owned(),
+                create_full_clip: "Create Full Clip".to_owned(),
+                tools_label: "Tools:".to_owned(),
+                tool_hand: "Hand".to_owned(),
+                tool_scissors: "Blade".to_owned(),
+                live_preview: "Live Preview".to_owned(),
+                ripple_delete: "Ripple Delete".to_owned(),
+                render_button: "RENDER VIDEO".to_owned(),
+                status_ready: "Ready.".to_owned(),
+                status_render_done: "Render finished.".to_owned(),
+                status_new_project: "New project created.".to_owned(),
+                status_project_loaded: "Project loaded.".to_owned(),
+                status_project_saved: "Project saved.".to_owned(),
+                err_mark_out_greater: "Mark Out must be > Mark In.".to_owned(),
+                err_set_marks: "Set Mark In and Mark Out first.".to_owned(),
+                err_playhead_inside: "Playhead must be inside a clip.".to_owned(),
+                err_select_clip: "Select a clip from the timeline.".to_owned(),
+                err_set_duration: "Set duration before creating a clip.".to_owned(),
+                err_clip_boundary: "Cannot split on clip boundary.".to_owned(),
+                err_no_clip_cursor: "No clip under cursor.".to_owned(),
+                loading_change_lang: "Changing language...".to_owned(),
+                settings_title: "Settings".to_owned(),
+                language_label: "Language".to_owned(),
+                no_preview: "No preview".to_owned(),
+                no_duration: "No material duration".to_owned(),
+            },
+            Language::Pl => Self {
+                file_menu: "Plik".to_owned(),
+                new_project: "Nowy projekt".to_owned(),
+                open_project: "Otwórz projekt...".to_owned(),
+                save_project: "Zapisz projekt...".to_owned(),
+                timeline_label: "Oś czasu:".to_owned(),
+                mark_in: "Mark In".to_owned(),
+                mark_out: "Mark Out".to_owned(),
+                add_clip: "Dodaj klip".to_owned(),
+                split_clip: "Podziel klip".to_owned(),
+                remove_clip: "Usuń klip".to_owned(),
+                editor_title: "Edytor Wideo".to_owned(),
+                input_file: "Plik wejściowy:".to_owned(),
+                output_file: "Plik wyjściowy:".to_owned(),
+                duration_label: "Długość (s):".to_owned(),
+                auto_ffprobe: "Auto (ffprobe)".to_owned(),
+                create_full_clip: "Utwórz cały klip".to_owned(),
+                tools_label: "Narzędzia:".to_owned(),
+                tool_hand: "Ręka".to_owned(),
+                tool_scissors: "Nożyczki".to_owned(),
+                live_preview: "Podgląd live".to_owned(),
+                ripple_delete: "Ripple Delete (Auto-przesuwanie)".to_owned(),
+                render_button: "RENDERUJ FILM".to_owned(),
+                status_ready: "Gotowy.".to_owned(),
+                status_render_done: "Render zakończony.".to_owned(),
+                status_new_project: "Nowy projekt utworzony.".to_owned(),
+                status_project_loaded: "Projekt wczytany.".to_owned(),
+                status_project_saved: "Projekt zapisany.".to_owned(),
+                err_mark_out_greater: "Mark Out musi być > Mark In.".to_owned(),
+                err_set_marks: "Ustaw najpierw Mark In i Mark Out.".to_owned(),
+                err_playhead_inside: "Głowica musi być wewnątrz klipu.".to_owned(),
+                err_select_clip: "Wybierz klip z osi czasu.".to_owned(),
+                err_set_duration: "Ustaw długość zanim utworzysz klip.".to_owned(),
+                err_clip_boundary: "Nie można dzielić na granicy klipu.".to_owned(),
+                err_no_clip_cursor: "Brak klipu pod kursorem.".to_owned(),
+                loading_change_lang: "Zmieniam język...".to_owned(),
+                settings_title: "Ustawienia".to_owned(),
+                language_label: "Język".to_owned(),
+                no_preview: "Brak podglądu".to_owned(),
+                no_duration: "Brak długości materiału".to_owned(),
+            }
+        }
+    }
+}
+
+
 
 struct VideoEditorApp {
     input_path: String,
@@ -40,6 +208,7 @@ struct VideoEditorApp {
     mark_in: Option<f32>,
     mark_out: Option<f32>,
     selected_clip: Option<usize>,
+    selected_track: TrackType,
     preview_texture: Option<egui::TextureHandle>,
     waveform_texture: Option<egui::TextureHandle>,
     thumb_textures: Vec<egui::TextureHandle>,
@@ -63,14 +232,68 @@ struct VideoEditorApp {
     was_dragging_playhead: bool,
     timeline_zoom: f32,
     timeline_offset: f32,
-    last_drag_preview_time: Option<Instant>,
     last_drag_preview_playhead: f32,
     live_drag_preview: bool,
     tool: Tool,
     dragging_timeline: bool,
     dragging_fade: Option<FadeDrag>,
+    dragging_clip: Option<usize>,      // NEW: Index of clip being dragged
+    drag_clip_offset: f32,             // NEW: Offset from clip start to mouse
     ripple_delete: bool,
+    show_settings: bool,
+    language: Language,
+    text: TextResources,
+
+    language_switch_start: Option<Instant>,
     status: String,
+    // Async Preview
+    preview_rx: mpsc::Receiver<(f32, Vec<u8>)>,
+    preview_tx: mpsc::Sender<(f32, Vec<u8>)>,
+    preview_busy: Arc<AtomicBool>,
+    // Frame Cache (LRU) - klucz: timestamp w ms, wartość: PNG bytes
+    #[allow(dead_code)]
+    frame_cache: HashMap<i64, Vec<u8>>,
+    #[allow(dead_code)]
+    frame_cache_max_size: usize,
+    
+    // Video Sync
+    waiting_for_video_ready: bool,
+    video_ready_signal: Arc<AtomicBool>,
+    playback_start_playhead: f32, // Position when playback started
+    
+    // Settings
+    hw_accel_mode: HwAccelMode,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+enum HwAccelMode {
+    #[default]
+    None,
+    Auto,
+    Cuda, // NVIDIA
+    Vaapi, // Intel/AMD (Linux)
+    VideoToolbox, // MacOS
+}
+
+impl std::fmt::Display for HwAccelMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HwAccelMode::None => write!(f, "None (CPU)"),
+            HwAccelMode::Auto => write!(f, "Auto"),
+            HwAccelMode::Cuda => write!(f, "CUDA (NVIDIA)"),
+            HwAccelMode::Vaapi => write!(f, "VAAPI (Linux)"),
+            HwAccelMode::VideoToolbox => write!(f, "VideoToolbox (Mac)"),
+        }
+    }
+}
+
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+enum TrackType {
+    #[default]
+    Both,
+    Video,
+    Audio,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -79,7 +302,15 @@ struct Clip {
     end: f32,
     fade_in: f32,
     fade_out: f32,
+    #[serde(default = "default_true")]
+    linked: bool,
+    #[serde(default = "default_true")]
+    video_enabled: bool,
+    #[serde(default = "default_true")]
+    audio_enabled: bool,
 }
+
+fn default_true() -> bool { true }
 
 #[derive(Serialize, Deserialize)]
 struct ProjectData {
@@ -111,6 +342,16 @@ enum Tool {
 
 impl eframe::App for VideoEditorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Ok((_time, data)) = self.preview_rx.try_recv() {
+             // Hack: musimy zaladowac teksture w glownym watku (tutaj), bo ctx jest dostepny
+             // Ale load_texture wymaga Context. OK.
+             if let Ok(texture) = load_texture_from_memory(ctx, &data, "preview_async") {
+                 self.preview_texture = Some(texture);
+                 // self.last_preview_time = Some(Instant::now()); // Opcjonalne
+                 // self.last_preview_playhead = time; // Ważne dla logiki
+             }
+        }
+
         let mut user_seeked = false;
 
         // Skroty klawiszowe
@@ -120,8 +361,87 @@ impl eframe::App for VideoEditorApp {
         if ctx.input(|i| i.key_pressed(egui::Key::B)) {
             self.tool = Tool::Scissors;
         }
+        // Delete / Backspace - usuwa zaznaczony klip
+        if ctx.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)) {
+            if let Some(idx) = self.selected_clip {
+                if idx < self.clips.len() {
+                    if self.ripple_delete {
+                        // Ripple Delete - przesun pozostale klipy
+                        let duration = self.clips[idx].end - self.clips[idx].start;
+                        self.clips.remove(idx);
+                        for clip in self.clips.iter_mut().skip(idx) {
+                            clip.start -= duration;
+                            clip.end -= duration;
+                        }
+                    } else {
+                        self.clips.remove(idx);
+                    }
+                    self.selected_clip = None;
+                    self.status = "Klip usuniety.".to_string();
+                }
+            }
+        }
 
-        if self.is_playing {
+        // Logika Fake Loading przy zmianie jezyka
+        if let Some(start_time) = self.language_switch_start {
+            let duration = start_time.elapsed();
+            if duration.as_secs_f32() > 1.0 {
+                 // Koniec ladowania, faktyczna zmiana juz sie odbywa w momencie klikniecia? 
+                 // Nie, uzytkownik chce aby ladowanie bylo PO kliknieciu.
+                 // Wiec tutaj finalizujemy zmiane text resources.
+                 // Ale zaraz, musimy wiedziec na jaki jezyk zmienic.
+                 // Uproszczenie: flaga language jest ustawiana PO loading screenie? 
+                 // Lepiej: przyciski ustawiaja TARGET language, a tutaj go aplikujemy.
+                 // Ale w prostym modelu: przyciski ustawiaja language_switch_start.
+                 // A tutaj zmieniamy na *przeciwny* czy wybrany? 
+                 // Zrobmy tak: przyciski ustawiaja `self.language` od razu, ALE self.text dopiero tutaj.
+                 // Wtedy loading screen bedzie mial stary tekst. 
+                 // OK, przyciski ustawiaja `switch_start` i `pending_language` (ale nie mam takiego pola).
+                 // Hack: Przyciski zmieniaja `self.language` od razu, a `self.text` updatujemy tutaj.
+                 // Wtedy loading text bedzie juz w nowym jezyku? Nie, `self.text` jest stary.
+                 // OK:
+                 self.text = TextResources::new(self.language);
+                 self.language_switch_start = None;
+            } else {
+                 // Wyswietlenie Modala Ladowania
+                 egui::CentralPanel::default().show(ctx, |ui| {
+                     ui.vertical_centered(|ui| {
+                         ui.add_space(ui.available_height() / 2.0 - 50.0);
+                         ui.heading(&self.text.loading_change_lang);
+                         ui.add(egui::Spinner::new().size(40.0));
+                     });
+                 });
+                 ctx.request_repaint(); // Wymus odswiezanie
+                 return; // Zatrzymaj rysowanie reszty UI
+            }
+        }
+
+        // VIDEO SYNC: Check if waiting for video buffer
+        if self.waiting_for_video_ready {
+            if self.video_ready_signal.load(Ordering::Relaxed) {
+                // Video is ready! Start Audio and Time
+                self.waiting_for_video_ready = false;
+                if let Err(e) = self.start_audio_playback() {
+                    self.status = format!("Audio error: {}", e);
+                }
+                self.is_playing = true;
+                self.last_tick = Some(Instant::now());
+            } else {
+                // Buffering... request repaint to poll
+                // Check if thread died?
+                if let Some(handle) = &self.playback_thread {
+                    if handle.is_finished() {
+                        self.waiting_for_video_ready = false;
+                        self.is_playing = false;
+                        self.status = "Błąd: Wątek wideo zakończył pracę przed startem.".to_string();
+                        return;
+                    }
+                }
+                ctx.request_repaint();
+            }
+        }
+
+        if self.is_playing && !self.waiting_for_video_ready {
             let now = Instant::now();
             let dt = if let Some(last) = self.last_tick {
                 now.duration_since(last).as_secs_f32()
@@ -129,11 +449,44 @@ impl eframe::App for VideoEditorApp {
                 0.0
             };
             self.last_tick = Some(now);
-            if self.duration > 0.0 && dt > 0.0 {
-                self.playhead = (self.playhead + dt).min(self.duration);
-                if self.playhead >= self.duration {
+            
+            if !self.clips.is_empty() {
+                let new_playhead = if self.audio_stream.is_some() {
+                     // AUDIO MASTER SYNC
+                     let played = self.audio_samples_played.load(Ordering::Relaxed) as f32;
+                     let rate = self.audio_sample_rate.max(1) as f32;
+                     let channels = self.audio_channels.max(1) as f32;
+                     let audio_time = played / (rate * channels);
+                     self.playback_start_playhead + audio_time
+                } else {
+                     // Fallback to strict timer if no audio
+                     self.playhead + dt
+                };
+                
+                // Find the last clip end (effective duration)
+                let effective_end = self.clips.iter()
+                    .filter(|c| c.video_enabled || c.audio_enabled)
+                    .map(|c| c.end)
+                    .fold(0.0f32, |a, b| a.max(b));
+                
+                // Check if new playhead is in a gap (not inside any clip)
+                let in_clip = self.clips.iter()
+                    .filter(|c| c.video_enabled || c.audio_enabled)
+                    .any(|c| new_playhead >= c.start && new_playhead < c.end);
+                
+                if !in_clip && new_playhead < effective_end {
+                    // Start playback is just linear, gaps are black/silent.
+                    // Do NOT skip gaps.
+                }
+                
+                self.playhead = new_playhead;
+                
+                if self.playhead >= effective_end {
+                    self.playhead = effective_end;
                     self.stop_playback();
                 }
+            } else if self.clips.is_empty() {
+                self.stop_playback();
             }
             ctx.request_repaint();
         }
@@ -151,8 +504,13 @@ impl eframe::App for VideoEditorApp {
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
-                ui.menu_button("Plik", |ui| {
-                    if ui.button("Nowy projekt").clicked() {
+                let file_label = self.text.file_menu.clone();
+                let new_proj = self.text.new_project.clone();
+                let open_proj = self.text.open_project.clone();
+                let save_proj = self.text.save_project.clone();
+                
+                ui.menu_button(&file_label, |ui| {
+                    if ui.button(&new_proj).clicked() {
                         self.input_path.clear();
                         self.output_path.clear();
                         self.clips.clear();
@@ -163,20 +521,67 @@ impl eframe::App for VideoEditorApp {
                         self.thumb_times.clear();
                         self.preview_texture = None;
                         self.waveform_texture = None;
-                        self.status = "Nowy projekt utworzony".to_string();
+                        self.status = self.text.status_new_project.clone();
                         ui.close_menu();
                     }
-                    if ui.button("Otworz projekt...").clicked() {
+                    if ui.button(&open_proj).clicked() {
                         self.load_project_dialog(ctx);
                         ui.close_menu();
                     }
-                    if ui.button("Zapisz projekt...").clicked() {
+                    if ui.button(&save_proj).clicked() {
                         self.save_project_as();
                         ui.close_menu();
                     }
                 });
+
+                // Przelacznik Settings
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("⚙").clicked() {
+                        self.show_settings = !self.show_settings;
+                    }
+                });
             });
         });
+
+        // Okno Ustawien
+        if self.show_settings {
+            let title = self.text.settings_title.clone();
+            let label_lang = self.text.language_label.clone();
+            
+            egui::Window::new(title)
+                .pivot(egui::Align2::CENTER_CENTER)
+                .default_pos(ctx.screen_rect().center())
+                .open(&mut self.show_settings)
+                .show(ctx, |ui| {
+                    ui.label(label_lang);
+                    ui.horizontal(|ui| {
+                         if ui.button("🇵🇱 PL").clicked() {
+                             if self.language != Language::Pl {
+                                 self.language = Language::Pl;
+                                 self.language_switch_start = Some(Instant::now());
+                             }
+                         }
+                         if ui.button("🇺🇸 EN").clicked() {
+                             if self.language != Language::En {
+                                 self.language = Language::En;
+                                 self.language_switch_start = Some(Instant::now());
+                             }
+                         }
+                    });
+                     
+                     ui.add_space(10.0);
+                     ui.label("Hardware Acceleration:");
+                     egui::ComboBox::from_id_source("hw_accel")
+                        .selected_text(self.hw_accel_mode.to_string())
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.hw_accel_mode, HwAccelMode::None, "None (CPU)");
+                            ui.selectable_value(&mut self.hw_accel_mode, HwAccelMode::Auto, "Auto");
+                            ui.selectable_value(&mut self.hw_accel_mode, HwAccelMode::Cuda, "CUDA (NVIDIA)");
+                            ui.selectable_value(&mut self.hw_accel_mode, HwAccelMode::Vaapi, "VAAPI (Linux)");
+                            ui.selectable_value(&mut self.hw_accel_mode, HwAccelMode::VideoToolbox, "VideoToolbox (Mac)");
+                        });
+                });
+        }
 
         // Panel dolny: Timeline
         egui::TopBottomPanel::bottom("timeline_panel")
@@ -184,20 +589,20 @@ impl eframe::App for VideoEditorApp {
             .min_height(150.0)
             .show(ctx, |ui| {
                 ui.vertical(|ui| {
-                    ui.label("Timeline:");
+                    ui.label(&self.text.timeline_label);
                     if draw_timeline(ui, self) {
                         user_seeked = true;
                     }
                     ui.separator();
                     ui.horizontal(|ui| {
                         ui.label(format!("Playhead: {:.2}s", self.playhead));
-                        if ui.button("Mark In").clicked() {
+                        if ui.button(&self.text.mark_in).clicked() {
                             self.mark_in = Some(self.playhead);
                         }
-                        if ui.button("Mark Out").clicked() {
+                        if ui.button(&self.text.mark_out).clicked() {
                             self.mark_out = Some(self.playhead);
                         }
-                        if ui.button("Dodaj klip").clicked() {
+                        if ui.button(&self.text.add_clip).clicked() {
                             if let (Some(start), Some(end)) = (self.mark_in, self.mark_out) {
                                 if end > start {
                                     self.clips.push(Clip {
@@ -205,29 +610,32 @@ impl eframe::App for VideoEditorApp {
                                         end,
                                         fade_in: 0.0,
                                         fade_out: 0.0,
+                                        linked: true,
+                                        video_enabled: true,
+                                        audio_enabled: true,
                                     });
                                     self.selected_clip = Some(self.clips.len() - 1);
                                     self.status.clear();
                                 } else {
-                                    self.status = "Mark Out musi byc > Mark In.".to_string();
+                                    self.status = self.text.err_mark_out_greater.clone();
                                 }
                             } else {
-                                self.status = "Ustaw Mark In i Mark Out.".to_string();
+                                self.status = self.text.err_set_marks.clone();
                             }
                         }
-                        if ui.button("Podziel klip").clicked() {
+                        if ui.button(&self.text.split_clip).clicked() {
                             if let Some(idx) = self.selected_clip {
                                 if let Some(split) = split_clip_at(&mut self.clips, idx, self.playhead) {
                                     self.selected_clip = Some(split);
                                     self.status.clear();
                                 } else {
-                                    self.status = "Playhead musi byc w srodku klipu.".to_string();
+                                    self.status = self.text.err_playhead_inside.clone();
                                 }
                             } else {
-                                self.status = "Wybierz klip z timeline.".to_string();
+                                self.status = self.text.err_select_clip.clone();
                             }
                         }
-                        if ui.button("Usun klip").clicked() {
+                        if ui.button(&self.text.remove_clip).clicked() {
                             if let Some(idx) = self.selected_clip {
                                 if idx < self.clips.len() {
                                     self.clips.remove(idx);
@@ -241,13 +649,14 @@ impl eframe::App for VideoEditorApp {
 
         // Panel boczny: Narzedzia
         egui::SidePanel::left("tools_panel")
+
             .resizable(true)
             .default_width(300.0)
             .show(ctx, |ui| {
-                ui.heading("Edytor Video");
+                ui.heading(&self.text.editor_title);
                 ui.separator();
 
-                ui.label("Plik wejsciowy:");
+                ui.label(&self.text.input_file);
                 ui.horizontal(|ui| {
                     ui.text_edit_singleline(&mut self.input_path);
                     if ui.button("...").clicked() {
@@ -258,7 +667,7 @@ impl eframe::App for VideoEditorApp {
                     }
                 });
 
-                ui.label("Plik wyjsciowy:");
+                ui.label(&self.text.output_file);
                 ui.horizontal(|ui| {
                     ui.text_edit_singleline(&mut self.output_path);
                     if ui.button("...").clicked() {
@@ -269,15 +678,15 @@ impl eframe::App for VideoEditorApp {
                 });
 
                 ui.separator();
-                ui.label("Dlugosc (s):");
+                ui.label(&self.text.duration_label);
                 ui.horizontal(|ui| {
                     ui.add(egui::DragValue::new(&mut self.duration).clamp_range(0.0..=86400.0));
                 });
                 ui.horizontal(|ui| {
-                    if ui.button("Auto (ffprobe)").clicked() {
+                    if ui.button(&self.text.auto_ffprobe).clicked() {
                         self.prepare_media_assets(ctx);
                     }
-                    if ui.button("Utworz caly klip").clicked() {
+                    if ui.button(&self.text.create_full_clip).clicked() {
                         if self.duration > 0.0 {
                             self.clips.clear();
                             self.clips.push(Clip {
@@ -285,27 +694,30 @@ impl eframe::App for VideoEditorApp {
                                 end: self.duration,
                                 fade_in: 0.0,
                                 fade_out: 0.0,
+                                linked: true,
+                                video_enabled: true,
+                                audio_enabled: true,
                             });
                             self.selected_clip = Some(0);
                         } else {
-                            self.status = "Ustaw dlugosc zanim utworzysz klip.".to_string();
+                            self.status = self.text.err_set_duration.clone();
                         }
                     }
                 });
                 
                 ui.separator();
-                ui.label("Narzedzia:");
+                ui.label(&self.text.tools_label);
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.tool, Tool::Hand, "Reka");
-                    ui.selectable_value(&mut self.tool, Tool::Scissors, "Nozyczki");
+                    ui.selectable_value(&mut self.tool, Tool::Hand, &self.text.tool_hand);
+                    ui.selectable_value(&mut self.tool, Tool::Scissors, &self.text.tool_scissors);
                 });
-                ui.checkbox(&mut self.live_drag_preview, "Live preview");
-                ui.checkbox(&mut self.ripple_delete, "Ripple Delete (Auto-przesuwanie)");
+                ui.checkbox(&mut self.live_drag_preview, &self.text.live_preview);
+                ui.checkbox(&mut self.ripple_delete, &self.text.ripple_delete);
 
                 ui.separator();
-                if ui.button("RENDERUJ FILM").clicked() {
+                if ui.button(&self.text.render_button).clicked() {
                     match render_video(&self.input_path, &self.output_path, &self.clips) {
-                        Ok(()) => self.status = "Render zakonczony.".to_string(),
+                        Ok(()) => self.status = self.text.status_render_done.clone(),
                         Err(err) => self.status = format!("Blad: {err:#}"),
                     }
                 }
@@ -348,28 +760,37 @@ impl eframe::App for VideoEditorApp {
                 
                 let draw_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(draw_width, draw_height));
 
-                // Software Fade Logic
-                let mut alpha = 1.0;
-                if let Some(clip) = self.clips.iter().find(|c| self.playhead >= c.start && self.playhead < c.end) {
-                        let rel = self.playhead - clip.start;
-                        if rel < clip.fade_in {
-                            alpha = rel / clip.fade_in.max(0.001);
-                        }
-                        let end_rel = clip.end - self.playhead;
-                        if end_rel < clip.fade_out {
-                            alpha = alpha.min(end_rel / clip.fade_out.max(0.001));
-                        }
-                }
-                let alpha = alpha.clamp(0.0, 1.0);
-                let tint = egui::Color32::from_white_alpha((alpha * 255.0) as u8);
+                // Check if playhead is inside any video clip
+                let current_clip = self.clips.iter().find(|c| 
+                    self.playhead >= c.start && self.playhead < c.end && c.video_enabled
+                );
 
-                let image = egui::Image::new(SizedTexture::new(texture.id(), draw_rect.size())).tint(tint);
-                egui::Image::paint_at(&image, ui, draw_rect);
+                if let Some(clip) = current_clip {
+                    // Software Fade Logic
+                    let mut alpha = 1.0;
+                    let rel = self.playhead - clip.start;
+                    if rel < clip.fade_in {
+                        alpha = rel / clip.fade_in.max(0.001);
+                    }
+                    let end_rel = clip.end - self.playhead;
+                    if end_rel < clip.fade_out {
+                        alpha = alpha.min(end_rel / clip.fade_out.max(0.001));
+                    }
+                    
+                    let alpha = alpha.clamp(0.0, 1.0);
+                    let tint = egui::Color32::from_white_alpha((alpha * 255.0) as u8);
+
+                    let image = egui::Image::new(SizedTexture::new(texture.id(), draw_rect.size())).tint(tint);
+                    egui::Image::paint_at(&image, ui, draw_rect);
+                } else {
+                    // No clip at playhead position -> Draw NOTHING (Black background remains)
+                    // Optionally draw logo or placeholder
+                }
             } else {
                  ui.painter().text(
                     rect.center(),
                     egui::Align2::CENTER_CENTER,
-                    "Brak podgladu",
+                    &self.text.no_preview,
                     egui::TextStyle::Heading.resolve(ui.style()),
                     egui::Color32::GRAY,
                 );
@@ -529,32 +950,43 @@ fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 4.0, egui::Color32::from_gray(30));
 
+    // Parametry Layoutu
+    let ruler_height = 24.0;
+    let left = rect.left() + 8.0;
+    let right = rect.right() - 8.0;
+    let width = (right - left).max(1.0);
+
     if app.duration <= 0.0 {
         painter.text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
-            "Brak dlugosci materialu",
+            &app.text.no_duration,
             egui::TextStyle::Body.resolve(ui.style()),
             egui::Color32::from_gray(160),
         );
         return false;
     }
 
+    // Ruler (Linijka)
+    let ruler_rect = egui::Rect::from_min_max(
+        egui::pos2(left, rect.top()),
+        egui::pos2(right, rect.top() + ruler_height),
+    );
+    // Klipy (przesunięte w dół)
     let video_rect = egui::Rect::from_min_max(
-        egui::pos2(rect.left() + 8.0, rect.top() + 8.0),
-        egui::pos2(rect.right() - 8.0, rect.center().y - 4.0),
+        egui::pos2(left, ruler_rect.bottom() + 4.0),
+        egui::pos2(right, ruler_rect.bottom() + 4.0 + (rect.height() - ruler_height - 8.0) * 0.5),
     );
     let audio_rect = egui::Rect::from_min_max(
-        egui::pos2(rect.left() + 8.0, rect.center().y + 4.0),
-        egui::pos2(rect.right() - 8.0, rect.bottom() - 8.0),
+        egui::pos2(left, video_rect.bottom() + 2.0),
+        egui::pos2(right, rect.bottom() - 2.0),
     );
 
+    painter.rect_filled(ruler_rect, 0.0, egui::Color32::from_gray(25));
     painter.rect_filled(video_rect, 4.0, egui::Color32::from_gray(40));
     painter.rect_filled(audio_rect, 4.0, egui::Color32::from_gray(35));
 
-    let left = rect.left() + 8.0;
-    let right = rect.right() - 8.0;
-    let width = (right - left).max(1.0);
+    // Zoom i Offset Logic
     let min_zoom = width / app.duration.max(0.01);
     if app.timeline_zoom <= 0.0 {
         app.timeline_zoom = min_zoom;
@@ -563,6 +995,40 @@ fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
     app.timeline_zoom = app.timeline_zoom.clamp(min_zoom, max_zoom);
     let window = width / app.timeline_zoom;
     app.timeline_offset = clamp_offset(app.timeline_offset, app.duration, window);
+
+    // Rysowanie Podziałki (Ticks)
+    let step = if window < 10.0 { 1.0 } 
+               else if window < 60.0 { 5.0 }
+               else if window < 300.0 { 30.0 }
+               else { 60.0 };
+    
+    let start_t = (app.timeline_offset / step).floor() * step;
+    let end_t = app.timeline_offset + window;
+    let mut t = start_t;
+    
+    while t <= end_t {
+         let x = left + (t - app.timeline_offset) * app.timeline_zoom;
+         if x >= left && x <= right {
+             painter.line_segment(
+                [egui::pos2(x, ruler_rect.bottom()), egui::pos2(x, ruler_rect.bottom() - 5.0)],
+                egui::Stroke::new(1.0, egui::Color32::GRAY),
+             );
+             if t >= 0.0 {
+                 let ts = t as u32;
+                 let text = format!("{:02}:{:02}", ts / 60, ts % 60);
+                 painter.text(
+                    egui::pos2(x + 2.0, ruler_rect.bottom() - 10.0),
+                    egui::Align2::LEFT_CENTER,
+                    text,
+                    egui::TextStyle::Small.resolve(ui.style()),
+                    egui::Color32::GRAY,
+                 );
+             }
+         }
+         t += step;
+    }
+
+
 
     if response.hovered() {
         let (scroll_y, scroll_x, modifiers) = ui.ctx().input(|i| {
@@ -587,15 +1053,8 @@ fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
         }
     }
 
-    if let Some(texture) = &app.waveform_texture {
-        let u0 = (app.timeline_offset / app.duration).clamp(0.0, 1.0);
-        let u1 = ((app.timeline_offset + window) / app.duration).clamp(0.0, 1.0);
-        painter.image(
-            texture.id(),
-            audio_rect,
-            egui::Rect::from_min_max(egui::pos2(u0, 0.0), egui::pos2(u1, 1.0)),
-            egui::Color32::WHITE,
-        );
+    if let Some(_texture) = &app.waveform_texture {
+        // Waveform is now drawn per-clip below
     } else {
         painter.text(
             audio_rect.center(),
@@ -606,28 +1065,7 @@ fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
         );
     }
 
-    if !app.thumb_textures.is_empty() && app.duration > 0.0 {
-        let chunk = app.duration / app.thumb_textures.len().max(1) as f32;
-        let thumb_w = app.timeline_zoom * chunk;
-        for (idx, texture) in app.thumb_textures.iter().enumerate() {
-            let t = app.thumb_times[idx];
-            let x0 = left + (t - chunk * 0.5 - app.timeline_offset) * app.timeline_zoom;
-            let x1 = x0 + thumb_w;
-            if x1 < video_rect.left() || x0 > video_rect.right() {
-                continue;
-            }
-            let thumb_rect = egui::Rect::from_min_max(
-                egui::pos2(x0.max(video_rect.left()), video_rect.top()),
-                egui::pos2(x1.min(video_rect.right()), video_rect.bottom()),
-            );
-            painter.image(
-                texture.id(),
-                thumb_rect,
-                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                egui::Color32::WHITE,
-            );
-        }
-    } else {
+    if app.thumb_textures.is_empty() {
         painter.text(
             video_rect.center(),
             egui::Align2::CENTER_CENTER,
@@ -641,7 +1079,8 @@ fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
     let mut hover_fade: Option<FadeDrag> = None;
     let handle_size = 20.0;
 
-    let mut remove_clip_idx = None;
+    let mut remove_clip_idx: Option<(usize, TrackType)> = None;
+    let mut toggle_link_idx: Option<usize> = None;
 
     for (idx, clip) in app.clips.iter().enumerate() {
         let start_x = left + (clip.start - app.timeline_offset) * app.timeline_zoom;
@@ -655,28 +1094,240 @@ fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
             egui::pos2(end_x, audio_rect.bottom()),
         );
 
-        // Interaction & Context Menu
-        let interact_rect = video_clip_rect.union(audio_clip_rect);
-        let response = ui.interact(interact_rect, ui.id().with("clip_interact").with(idx), egui::Sense::click());
-        
-        if response.clicked() {
-            app.selected_clip = Some(idx);
-        }
-        response.context_menu(|ui| {
-            if ui.button("Usun").clicked() {
-                remove_clip_idx = Some(idx);
-                ui.close_menu();
-            }
-            ui.label(if app.ripple_delete { "(Ripple On)" } else { "(Ripple Off)" });
-        });
+        // Separate interactions for video and audio when unlinked
+        let clip_sense = if app.tool == Tool::Hand {
+            egui::Sense::click_and_drag()
+        } else {
+            egui::Sense::click()
+        };
+        let video_resp = ui.interact(video_clip_rect, ui.id().with("clip_video").with(idx), clip_sense);
+        let audio_resp = ui.interact(audio_clip_rect, ui.id().with("clip_audio").with(idx), clip_sense);
 
-        let color = if Some(idx) == app.selected_clip {
+        // Get click position for cutting
+        let click_pos = video_resp.interact_pointer_pos().or(audio_resp.interact_pointer_pos());
+
+        // Drag Start - begin clip dragging
+        if (video_resp.drag_started() || audio_resp.drag_started()) && app.tool == Tool::Hand {
+            if let Some(pos) = click_pos {
+                let t = app.timeline_offset + ((pos.x - left) / app.timeline_zoom);
+                app.dragging_clip = Some(idx);
+                app.drag_clip_offset = t - clip.start;
+                app.selected_clip = Some(idx);
+                app.selected_track = if clip.linked { TrackType::Both } else if video_resp.drag_started() { TrackType::Video } else { TrackType::Audio };
+            }
+        }
+
+        // Dragging clip - update position (store for after loop)
+        if (video_resp.dragged() || audio_resp.dragged()) && app.dragging_clip == Some(idx) {
+            if let Some(pos) = click_pos {
+                let t = app.timeline_offset + ((pos.x - left) / app.timeline_zoom);
+                let new_start = (t - app.drag_clip_offset).max(0.0);
+                // Store the move request as status (will process after loop)
+                app.status = format!("MOVE:{}:{}", idx, new_start);
+            }
+        }
+
+        // Drag stopped on this clip
+        if video_resp.drag_stopped() || audio_resp.drag_stopped() {
+            app.dragging_clip = None;
+        }
+
+        // Selection logic OR Cutting logic (only on click, not drag)
+        if video_resp.clicked() || audio_resp.clicked() {
+            if app.tool == Tool::Scissors {
+                // Blade Tool - cut the clip at mouse position
+                if let Some(pos) = click_pos {
+                    let t = app.timeline_offset + ((pos.x - left) / app.timeline_zoom).clamp(0.0, window);
+                    if t > clip.start && t < clip.end {
+                        // We need to defer the cut to after the loop to avoid borrow issues
+                        // Store info for later
+                        // For now, we'll use a workaround - store cut request
+                        app.status = format!("CUT:{}:{}", idx, t);
+                    }
+                }
+            } else {
+                // Normal selection
+                if video_resp.clicked() {
+                    app.selected_clip = Some(idx);
+                    app.selected_track = if clip.linked { TrackType::Both } else { TrackType::Video };
+                }
+                if audio_resp.clicked() {
+                    app.selected_clip = Some(idx);
+                    app.selected_track = if clip.linked { TrackType::Both } else { TrackType::Audio };
+                }
+            }
+        }
+
+        // Context Menu for VIDEO track
+        if clip.video_enabled {
+            video_resp.context_menu(|ui| {
+                if clip.linked {
+                    if ui.button("🔗 Unlink (Rozłącz)").clicked() {
+                        toggle_link_idx = Some(idx);
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button(&app.text.remove_clip).clicked() {
+                        remove_clip_idx = Some((idx, TrackType::Both));
+                        ui.close_menu();
+                    }
+                } else {
+                    if ui.button("🔗 Link (Połącz)").clicked() {
+                        toggle_link_idx = Some(idx);
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("🎬 Usuń Video").clicked() {
+                        remove_clip_idx = Some((idx, TrackType::Video));
+                        ui.close_menu();
+                    }
+                    if clip.audio_enabled {
+                        if ui.button("🔊 Usuń Audio").clicked() {
+                            remove_clip_idx = Some((idx, TrackType::Audio));
+                            ui.close_menu();
+                        }
+                    }
+                }
+                ui.separator();
+                ui.label(if app.ripple_delete { format!("({} On)", app.text.ripple_delete) } else { format!("({} Off)", app.text.ripple_delete) });
+            });
+        }
+
+        // Context Menu for AUDIO track
+        if clip.audio_enabled {
+            audio_resp.context_menu(|ui| {
+                if clip.linked {
+                    if ui.button("🔗 Unlink (Rozłącz)").clicked() {
+                        toggle_link_idx = Some(idx);
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button(&app.text.remove_clip).clicked() {
+                        remove_clip_idx = Some((idx, TrackType::Both));
+                        ui.close_menu();
+                    }
+                } else {
+                    if ui.button("🔗 Link (Połącz)").clicked() {
+                        toggle_link_idx = Some(idx);
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if clip.video_enabled {
+                        if ui.button("🎬 Usuń Video").clicked() {
+                            remove_clip_idx = Some((idx, TrackType::Video));
+                            ui.close_menu();
+                        }
+                    }
+                    if ui.button("🔊 Usuń Audio").clicked() {
+                        remove_clip_idx = Some((idx, TrackType::Audio));
+                        ui.close_menu();
+                    }
+                }
+                ui.separator();
+                ui.label(if app.ripple_delete { format!("({} On)", app.text.ripple_delete) } else { format!("({} Off)", app.text.ripple_delete) });
+            });
+        }
+
+        // Visual styling based on selection and link status
+        let is_selected = Some(idx) == app.selected_clip;
+        let video_selected = is_selected && (app.selected_track == TrackType::Both || app.selected_track == TrackType::Video);
+        let audio_selected = is_selected && (app.selected_track == TrackType::Both || app.selected_track == TrackType::Audio);
+
+        // Video track colors
+        let video_color = if !clip.video_enabled {
+            egui::Color32::from_gray(60)
+        } else if video_selected {
             egui::Color32::from_rgb(80, 170, 255)
         } else {
             egui::Color32::from_rgb(70, 120, 90)
         };
-        painter.rect_stroke(video_clip_rect, 4.0, egui::Stroke::new(2.0, color));
-        painter.rect_stroke(audio_clip_rect, 4.0, egui::Stroke::new(2.0, color));
+
+        // Audio track colors
+        let audio_color = if !clip.audio_enabled {
+            egui::Color32::from_gray(60)
+        } else if audio_selected {
+            egui::Color32::from_rgb(80, 170, 255)
+        } else {
+            egui::Color32::from_rgb(70, 120, 90)
+        };
+
+        // Draw thumbnails INSIDE clip bounds (video track)
+        if clip.video_enabled && !app.thumb_textures.is_empty() && app.duration > 0.0 {
+            let chunk = app.duration / app.thumb_textures.len().max(1) as f32;
+            let thumb_w = app.timeline_zoom * chunk;
+            for (tidx, texture) in app.thumb_textures.iter().enumerate() {
+                let t = app.thumb_times[tidx];
+                // Check if this thumbnail overlaps with the clip
+                let thumb_start = t - chunk * 0.5;
+                let thumb_end = t + chunk * 0.5;
+                if thumb_end < clip.start || thumb_start > clip.end {
+                    continue;
+                }
+                let x0 = left + (thumb_start - app.timeline_offset) * app.timeline_zoom;
+                let x1 = x0 + thumb_w;
+                // Clip the thumbnail to the clip bounds
+                let clip_x0 = left + (clip.start - app.timeline_offset) * app.timeline_zoom;
+                let clip_x1 = left + (clip.end - app.timeline_offset) * app.timeline_zoom;
+                let draw_x0 = x0.max(clip_x0).max(video_rect.left());
+                let draw_x1 = x1.min(clip_x1).min(video_rect.right());
+                if draw_x1 <= draw_x0 {
+                    continue;
+                }
+                // Calculate UV coordinates for partial thumbnail
+                let u0 = ((draw_x0 - x0) / thumb_w).clamp(0.0, 1.0);
+                let u1 = ((draw_x1 - x0) / thumb_w).clamp(0.0, 1.0);
+                let thumb_rect = egui::Rect::from_min_max(
+                    egui::pos2(draw_x0, video_rect.top()),
+                    egui::pos2(draw_x1, video_rect.bottom()),
+                );
+                painter.image(
+                    texture.id(),
+                    thumb_rect,
+                    egui::Rect::from_min_max(egui::pos2(u0, 0.0), egui::pos2(u1, 1.0)),
+                    egui::Color32::WHITE,
+                );
+            }
+        }
+
+        // Draw waveform INSIDE clip bounds (audio track)
+        if clip.audio_enabled {
+            if let Some(texture) = &app.waveform_texture {
+                // Calculate UV coordinates based on clip position in the original video
+                let u0 = (clip.start / app.duration).clamp(0.0, 1.0);
+                let u1 = (clip.end / app.duration).clamp(0.0, 1.0);
+                painter.image(
+                    texture.id(),
+                    audio_clip_rect,
+                    egui::Rect::from_min_max(egui::pos2(u0, 0.0), egui::pos2(u1, 1.0)),
+                    egui::Color32::WHITE,
+                );
+            }
+        }
+
+        // Draw clip rectangles
+        if clip.video_enabled {
+            painter.rect_stroke(video_clip_rect, 4.0, egui::Stroke::new(2.0, video_color));
+        } else {
+            // Disabled track - dim overlay
+            painter.rect_filled(video_clip_rect, 4.0, egui::Color32::from_rgba_unmultiplied(50, 50, 50, 150));
+        }
+
+        if clip.audio_enabled {
+            painter.rect_stroke(audio_clip_rect, 4.0, egui::Stroke::new(2.0, audio_color));
+        } else {
+            painter.rect_filled(audio_clip_rect, 4.0, egui::Color32::from_rgba_unmultiplied(50, 50, 50, 150));
+        }
+
+        // Link indicator (line connecting video and audio when linked)
+        if clip.linked && clip.video_enabled && clip.audio_enabled {
+            let link_x = start_x + 10.0;
+            painter.line_segment(
+                [egui::pos2(link_x, video_clip_rect.bottom()), egui::pos2(link_x, audio_clip_rect.top())],
+                egui::Stroke::new(2.0, egui::Color32::from_rgb(200, 200, 200)),
+            );
+            // Small chain icon
+            painter.circle_filled(egui::pos2(link_x, (video_clip_rect.bottom() + audio_clip_rect.top()) / 2.0), 4.0, egui::Color32::from_rgb(200, 200, 200));
+        }
 
         let fade_in_w = (clip.fade_in * app.timeline_zoom).max(0.0);
         let fade_out_w = (clip.fade_out * app.timeline_zoom).max(0.0);
@@ -767,6 +1418,92 @@ fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
         painter.circle_filled(handle_out_a, handle_size * 0.25, dot);
     }
 
+    // Toggle Link/Unlink
+    if let Some(idx) = toggle_link_idx {
+        if let Some(clip) = app.clips.get_mut(idx) {
+            clip.linked = !clip.linked;
+        }
+    }
+
+    // Handle clip removal
+    if let Some((idx, track_type)) = remove_clip_idx {
+        match track_type {
+            TrackType::Both => {
+                // Remove entire clip (Ripple Delete if enabled)
+                if app.ripple_delete {
+                    if let Some(clip) = app.clips.get(idx) {
+                        let duration = clip.end - clip.start;
+                        app.clips.remove(idx);
+                        for other in app.clips.iter_mut().skip(idx) {
+                            other.start -= duration;
+                            other.end -= duration;
+                        }
+                    }
+                } else {
+                    app.clips.remove(idx);
+                }
+                app.selected_clip = None;
+            }
+            TrackType::Video => {
+                // Disable video track only
+                if let Some(clip) = app.clips.get_mut(idx) {
+                    clip.video_enabled = false;
+                    // If both are now disabled, remove the clip entirely
+                    if !clip.video_enabled && !clip.audio_enabled {
+                        app.clips.remove(idx);
+                        app.selected_clip = None;
+                    }
+                }
+            }
+            TrackType::Audio => {
+                // Disable audio track only
+                if let Some(clip) = app.clips.get_mut(idx) {
+                    clip.audio_enabled = false;
+                    // If both are now disabled, remove the clip entirely
+                    if !clip.video_enabled && !clip.audio_enabled {
+                        app.clips.remove(idx);
+                        app.selected_clip = None;
+                    }
+                }
+            }
+        }
+    }
+
+    // Handle clip MOVE (live dragging)
+    if app.status.starts_with("MOVE:") {
+        let parts: Vec<&str> = app.status.split(':').collect();
+        if parts.len() == 3 {
+            if let (Ok(idx), Ok(new_start)) = (parts[1].parse::<usize>(), parts[2].parse::<f32>()) {
+                if let Some(clip) = app.clips.get_mut(idx) {
+                    let clip_duration = clip.end - clip.start;
+                    clip.start = new_start;
+                    clip.end = new_start + clip_duration;
+                }
+            }
+        }
+        app.status.clear();
+    }
+
+    // Handle Blade Tool cuts (deferred from inside the loop)
+    if app.status.starts_with("CUT:") {
+        let parts: Vec<&str> = app.status.split(':').collect();
+        if parts.len() == 3 {
+            if let (Ok(idx), Ok(t)) = (parts[1].parse::<usize>(), parts[2].parse::<f32>()) {
+                if let Some(split_idx) = split_clip_at(&mut app.clips, idx, t) {
+                    app.selected_clip = Some(split_idx);
+                    app.playhead = t;
+                    app.status.clear();
+                } else {
+                    app.status = "Nie mozna uciac na granicy klipu.".to_string();
+                }
+            } else {
+                app.status.clear();
+            }
+        } else {
+            app.status.clear();
+        }
+    }
+
     let play_x = left + (app.playhead - app.timeline_offset) * app.timeline_zoom;
     let hover_hit = hover_pos
         .map(|pos| rect.contains(pos) && (pos.x - play_x).abs() <= 10.0)
@@ -775,7 +1512,6 @@ fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
         ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::None);
         if let Some(pos) = ui.ctx().pointer_latest_pos() {
             let size = 12.0;
-            // Rysujemy wlasny kursor (trojkat symbolizujacy narastanie/zanikanie)
             let points = match fade.kind {
                 FadeKind::In => vec![
                     pos + egui::vec2(-size, size),
@@ -788,13 +1524,11 @@ fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
                     pos + egui::vec2(-size, -size),
                 ],
             };
-            // Cien pod kursorem dla lepszej widocznosci
             painter.add(egui::Shape::convex_polygon(
                 points.iter().map(|p| *p + egui::vec2(1.0, 1.0)).collect(),
                 egui::Color32::from_black_alpha(100),
                 egui::Stroke::NONE,
             ));
-            // Wlasciwy kursor
             painter.add(egui::Shape::convex_polygon(
                 points,
                 egui::Color32::WHITE,
@@ -814,34 +1548,53 @@ fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
             };
         });
     }
+
+    // Hover Guide Line
+    if response.hovered() && app.tool == Tool::Scissors {
+        if let Some(pos) = hover_pos {
+             painter.line_segment(
+                [egui::pos2(pos.x, ruler_rect.bottom()), egui::pos2(pos.x, rect.bottom())],
+                egui::Stroke::new(1.0, egui::Color32::from_white_alpha(200)),
+            );
+        }
+    }
+
+    // Playhead Drawing
     painter.line_segment(
         [
-            egui::pos2(play_x, rect.top() + 4.0),
-            egui::pos2(play_x, rect.bottom() - 4.0),
+            egui::pos2(play_x, rect.top() + ruler_height),
+            egui::pos2(play_x, rect.bottom()),
         ],
         egui::Stroke::new(
             if hover_hit || app.dragging_playhead { 3.0 } else { 2.0 },
-            egui::Color32::from_rgb(240, 80, 80),
+            egui::Color32::RED,
         ),
     );
+    // Triangle Head in Ruler
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            egui::pos2(play_x - 6.0, ruler_rect.top() + ruler_height * 0.4),
+            egui::pos2(play_x + 6.0, ruler_rect.top() + ruler_height * 0.4),
+            egui::pos2(play_x, ruler_rect.bottom()),
+        ],
+        egui::Color32::RED,
+        egui::Stroke::NONE,
+    ));
 
     let mut changed = false;
     if response.drag_started() {
         if let Some(pos) = response.interact_pointer_pos() {
             let hit = (pos.x - play_x).abs() <= 10.0;
+            // Sprawdzenie czy kliknieto w Ruler
+            let in_ruler = ruler_rect.contains(pos);
+
             if let Some(fade_drag) = hover_fade {
                 app.dragging_fade = Some(fade_drag);
-                app.dragging_playhead = false;
-                app.dragging_timeline = false;
-            } else if app.tool == Tool::Hand && hit {
+            } else if in_ruler || (app.tool == Tool::Hand && hit) {
+                // Dragging in Ruler OR grabbing playhead with Hand
                 app.dragging_playhead = true;
-                app.dragging_timeline = false;
             } else if app.tool == Tool::Hand {
                 app.dragging_timeline = true;
-                app.dragging_playhead = false;
-            } else {
-                app.dragging_playhead = false;
-                app.dragging_timeline = false;
             }
         }
     }
@@ -849,74 +1602,86 @@ fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
         app.dragging_playhead = false;
         app.dragging_timeline = false;
         app.dragging_fade = None;
+        app.dragging_clip = None;
     }
 
     if response.clicked() || response.dragged() {
         if let Some(pos) = response.interact_pointer_pos() {
+            let in_ruler = ruler_rect.contains(pos);
+            
+            // Logic: Selection (check clips under cursor)
             let mut selected = None;
-            for (idx, clip) in app.clips.iter().enumerate() {
-                let start_x = left + (clip.start - app.timeline_offset) * app.timeline_zoom;
-                let end_x = left + (clip.end - app.timeline_offset) * app.timeline_zoom;
-                if pos.x >= start_x && pos.x <= end_x {
-                    selected = Some(idx);
-                    break;
+            // Only check clips if NOT in ruler
+            if !in_ruler {
+                for (idx, clip) in app.clips.iter().enumerate() {
+                    let start_x = left + (clip.start - app.timeline_offset) * app.timeline_zoom;
+                    let end_x = left + (clip.end - app.timeline_offset) * app.timeline_zoom;
+                    if pos.x >= start_x && pos.x <= end_x {
+                        selected = Some(idx);
+                        break;
+                    }
                 }
             }
+
             let t = app.timeline_offset + ((pos.x - left) / app.timeline_zoom).clamp(0.0, window);
+
             if let Some(fade_drag) = app.dragging_fade {
-                if let Some(clip) = app.clips.get_mut(fade_drag.clip_idx) {
+                 if let Some(clip) = app.clips.get_mut(fade_drag.clip_idx) {
                     let duration = (clip.end - clip.start).max(0.0);
-                    let t = t.clamp(clip.start, clip.end);
+                    let t_local = t.clamp(clip.start, clip.end);
                     match fade_drag.kind {
                         FadeKind::In => {
                             let max = (duration - clip.fade_out).max(0.0);
-                            clip.fade_in = (t - clip.start).max(0.0).min(max);
+                            clip.fade_in = (t_local - clip.start).max(0.0).min(max);
                         }
                         FadeKind::Out => {
                             let max = (duration - clip.fade_in).max(0.0);
-                            clip.fade_out = (clip.end - t).max(0.0).min(max);
+                            clip.fade_out = (clip.end - t_local).max(0.0).min(max);
                         }
                     }
                     app.selected_clip = Some(fade_drag.clip_idx);
                     changed = true;
                 }
-            } else if response.clicked() {
-                if app.tool == Tool::Scissors {
-                    if hover_fade.is_some() {
-                        app.selected_clip = selected;
-                        changed = true;
-                        return changed;
-                    }
-                    let by_time = app
-                        .clips
-                        .iter()
-                        .position(|clip| t > clip.start && t < clip.end);
-                    if let Some(idx) = selected.or(by_time) {
-                        if let Some(split) = split_clip_at(&mut app.clips, idx, t) {
-                            app.selected_clip = Some(split);
-                            app.playhead = t;
-                            app.status.clear();
-                            changed = true;
-                        } else {
-                            app.status = "Nie mozna uciac na granicy klipu.".to_string();
-                        }
-                    } else {
-                        app.status = "Brak klipu pod kursorem.".to_string();
-                    }
-                } else {
-                    app.selected_clip = selected;
-                    app.playhead = snap_time(t, app.timeline_zoom);
+            } else if let Some(drag_idx) = app.dragging_clip {
+                // Clip dragging - move the clip in time
+                if let Some(clip) = app.clips.get_mut(drag_idx) {
+                    let clip_duration = clip.end - clip.start;
+                    let new_start = (t - app.drag_clip_offset).max(0.0);
+                    clip.start = new_start;
+                    clip.end = new_start + clip_duration;
                     changed = true;
                 }
-            } else if app.dragging_playhead {
+            } else if app.dragging_playhead || (in_ruler && (response.clicked() || response.dragged())) {
+                // Scrubbing via Ruler or Playhead Drag
                 app.playhead = snap_time(t, app.timeline_zoom);
+                app.dragging_playhead = true;
                 changed = true;
+            } else if response.clicked() {
+                if app.tool == Tool::Scissors {
+                     // Cut logic
+                     let by_time = app.clips.iter().position(|clip| t > clip.start && t < clip.end);
+                     if let Some(idx) = selected.or(by_time) {
+                         if let Some(split) = split_clip_at(&mut app.clips, idx, t) {
+                             app.selected_clip = Some(split);
+                             app.playhead = t;
+                             app.status.clear();
+                             changed = true;
+                         } else {
+                             app.status = "Nie mozna uciac na granicy klipu.".to_string();
+                         }
+                     } else {
+                         app.status = "Brak klipu pod kursorem.".to_string();
+                     }
+                } else {
+                    // Regular Selection
+                    app.selected_clip = selected;
+                    changed = true;
+                }
             } else if app.dragging_timeline && app.tool == Tool::Hand {
                 let delta = ui.ctx().input(|i| i.pointer.delta()).x;
                 if delta.abs() > 0.0 {
-                    app.timeline_offset =
-                        clamp_offset(app.timeline_offset - delta / app.timeline_zoom, app.duration, window);
-                    changed = true;
+                     app.timeline_offset = clamp_offset(app.timeline_offset - delta / app.timeline_zoom, app.duration, window);
+                     changed = true;
                 }
             }
         }
@@ -945,6 +1710,9 @@ fn split_clip_at(clips: &mut Vec<Clip>, idx: usize, t: f32) -> Option<usize> {
         end: clip.end,
         fade_in: 0.0,
         fade_out: clip.fade_out,
+        linked: clip.linked,
+        video_enabled: clip.video_enabled,
+        audio_enabled: clip.audio_enabled,
     };
     clips[idx].end = t;
     clips[idx].fade_out = 0.0;
@@ -993,22 +1761,18 @@ fn build_fade_filters(clip: &Clip) -> (Option<String>, Option<String>) {
 fn generate_frame_memory(input: &str, time: f32, width: u32, height: i32) -> Result<Vec<u8>> {
     let width_str = if width == 0 { "-1".to_string() } else { width.to_string() };
     let height_str = if height == 0 { "-1".to_string() } else { height.to_string() };
+    let time_str = format!("{:.3}", time.max(0.0));
+    let scale_str = format!("scale={width_str}:{height_str}");
 
     let output = Command::new("ffmpeg")
         .args([
             "-y",
-            "-ss",
-            &format!("{:.3}", time.max(0.0)),
-            "-i",
-            input,
-            "-frames:v",
-            "1",
-            "-vf",
-            &format!("scale={width_str}:{height_str}"),
-            "-f",
-            "image2pipe",
-            "-vcodec",
-            "png",
+            "-ss", &time_str,
+            "-i", input,
+            "-frames:v", "1",
+            "-vf", &scale_str,
+            "-f", "image2pipe",
+            "-vcodec", "png",
             "-",
         ])
         .output()
@@ -1224,6 +1988,9 @@ impl VideoEditorApp {
                         end: self.duration,
                         fade_in: 0.0,
                         fade_out: 0.0,
+                        linked: true,
+                        video_enabled: true,
+                        audio_enabled: true,
                     });
                     self.selected_clip = Some(0);
                 } else {
@@ -1281,25 +2048,40 @@ impl VideoEditorApp {
         }
     }
 
-    fn maybe_update_preview_drag(&mut self, ctx: &egui::Context) {
+    fn maybe_update_preview_drag(&mut self, _ctx: &egui::Context) {
         if self.input_path.trim().is_empty() || self.duration <= 0.0 {
             return;
         }
-        let now = Instant::now();
-        if let Some(last) = self.last_drag_preview_time {
-            if now.duration_since(last).as_millis() < 140 {
-                return;
-            }
+
+        // Jesli watek pracuje, nie robimy nic (drop frame) - to zapewnia plynnosc UI
+        if self.preview_busy.load(Ordering::Relaxed) {
+             return;
         }
-        if (self.playhead - self.last_drag_preview_playhead).abs() < 0.12 {
+
+        // Jesli pozycja zmienila sie nieznacznie, tez ignorujemy
+        if (self.playhead - self.last_drag_preview_playhead).abs() < 0.1 {
             return;
         }
-        if let Err(err) = self.build_preview_scaled(ctx, 320) {
-            self.status = format!("Blad podgladu: {err:#}");
-        } else {
-            self.last_drag_preview_time = Some(now);
-            self.last_drag_preview_playhead = self.playhead;
-        }
+        
+        self.last_drag_preview_playhead = self.playhead;
+        
+        let busy = self.preview_busy.clone();
+        let tx = self.preview_tx.clone();
+        let input = self.input_path.clone();
+        let time = self.playhead;
+        
+        // Ustawiamy flage busy
+        busy.store(true, Ordering::Relaxed);
+        
+        // Spawn watku
+        thread::spawn(move || {
+            // Low-Res Proxy: 320px szerokosci dla szybkosci
+            if let Ok(data) = generate_frame_memory(&input, time, 320, 0) {
+                let _ = tx.send((time, data));
+            }
+            // Zwalniamy flage
+            busy.store(false, Ordering::Relaxed);
+        });
     }
 
     fn build_waveform(&mut self, ctx: &egui::Context) -> Result<()> {
@@ -1324,12 +2106,7 @@ impl VideoEditorApp {
         Ok(())
     }
 
-    fn build_preview_scaled(&mut self, ctx: &egui::Context, max_width: u32) -> Result<()> {
-        let data = generate_frame_memory(&self.input_path, self.playhead, max_width, 0)?;
-        let texture = load_texture_from_memory(ctx, &data, "preview_drag")?;
-        self.preview_texture = Some(texture);
-        Ok(())
-    }
+
 
     fn build_thumbnails(&mut self, ctx: &egui::Context, count: usize) -> Result<()> {
         // Miniatury tez robimy w pamieci, bez zasmiecania dysku
@@ -1358,8 +2135,30 @@ impl VideoEditorApp {
         if self.input_path.trim().is_empty() || self.duration <= 0.0 {
             return Err(anyhow!("Brak pliku lub dlugosci"));
         }
-        self.start_audio_playback()?;
+        
+        // Wstępne załadowanie pierwszej ramki (instant preview)
+        let (width, height) = scaled_preview_size(self.video_width, self.video_height, 640);
+        if let Ok(frame_data) = generate_frame_memory(&self.input_path, self.playhead, width, height as i32) {
+            if let Ok(image) = image::load_from_memory(&frame_data) {
+                let rgba = image.to_rgba8();
+                let size = [rgba.width() as usize, rgba.height() as usize];
+                let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &rgba.into_raw());
+                // Aktualizuj preview - ramka będzie widoczna od razu
+                if let Ok(mut frames) = self.playback_frames.lock() {
+                    *frames = Some(color_image);
+                }
+            }
+        }
+        
+        // Initialize start position for audio sync
+        self.playback_start_playhead = self.playhead;
+
+        // VIDEO SYNC: Start video thread, but wait for signal before starting audio and time
+        self.waiting_for_video_ready = true;
+        self.video_ready_signal.store(false, Ordering::Relaxed);
+        
         self.start_video_playback()?;
+        // Audio will be started in update() when video is ready
         Ok(())
     }
 
@@ -1385,6 +2184,17 @@ impl VideoEditorApp {
         
         // Generujemy filtry audio dla playbacku
         let (_, af_opt) = self.build_playback_filters(start_time);
+
+        // Collect valid audio intervals for masking
+        // (start, end)
+        let mut audio_intervals = Vec::new();
+        for clip in &self.clips {
+             if clip.audio_enabled {
+                 audio_intervals.push((clip.start, clip.end));
+             }
+        }
+        let audio_intervals = Arc::new(audio_intervals);
+        let playback_start_playhead_cp = self.playback_start_playhead;
 
         let stop_thread = Arc::clone(&stop);
         let buffer_thread = Arc::clone(&buffer);
@@ -1489,6 +2299,29 @@ impl VideoEditorApp {
                                 filled += 1;
                             }
                         }
+                        
+                        // Masking logic
+                        let intervals = audio_intervals.clone();
+                        let start_ph = playback_start_playhead_cp;
+                        // We need calculate time for each sample? Expensive. 
+                        // Calculate for block? 
+                        // Let's do imprecise block masking or sample precise.
+                        // Sample precise is better.
+                        let current_played = samples_played.load(Ordering::Relaxed);
+                        for (i, sample) in data.iter_mut().enumerate() {
+                            let time = start_ph + (current_played + i as u64) as f32 / (sample_rate as f32 * channels as f32);
+                            let mut valid = false;
+                            for (s, e) in intervals.iter() {
+                                if time >= *s && time < *e {
+                                    valid = true;
+                                    break;
+                                }
+                            }
+                            if !valid {
+                                *sample = 0;
+                            }
+                        }
+
                         samples_played.fetch_add(filled as u64, Ordering::Relaxed);
                     },
                     err_fn,
@@ -1516,6 +2349,25 @@ impl VideoEditorApp {
                                 filled += 1;
                             }
                         }
+
+                        // Masking logic
+                        let intervals = audio_intervals.clone();
+                        let start_ph = playback_start_playhead_cp;
+                        let current_played = samples_played.load(Ordering::Relaxed);
+                        for (i, sample) in data.iter_mut().enumerate() {
+                            let time = start_ph + (current_played + i as u64) as f32 / (sample_rate as f32 * channels as f32);
+                            let mut valid = false;
+                            for (s, e) in intervals.iter() {
+                                if time >= *s && time < *e {
+                                    valid = true;
+                                    break;
+                                }
+                            }
+                            if !valid {
+                                *sample = 0.0;
+                            }
+                        }
+                        
                         samples_played.fetch_add(filled as u64, Ordering::Relaxed);
                     },
                     err_fn,
@@ -1543,6 +2395,25 @@ impl VideoEditorApp {
                                 filled += 1;
                             }
                         }
+
+                        // Masking logic
+                        let intervals = audio_intervals.clone();
+                        let start_ph = playback_start_playhead_cp;
+                        let current_played = samples_played.load(Ordering::Relaxed);
+                        for (i, sample) in data.iter_mut().enumerate() {
+                            let time = start_ph + (current_played + i as u64) as f32 / (sample_rate as f32 * channels as f32);
+                            let mut valid = false;
+                            for (s, e) in intervals.iter() {
+                                if time >= *s && time < *e {
+                                    valid = true;
+                                    break;
+                                }
+                            }
+                            if !valid {
+                                *sample = 32768;
+                            }
+                        }
+
                         samples_played.fetch_add(filled as u64, Ordering::Relaxed);
                     },
                     err_fn,
@@ -1572,6 +2443,8 @@ impl VideoEditorApp {
         let audio_clock = Arc::clone(&self.audio_samples_played);
         let sample_rate = self.audio_sample_rate.max(1);
         let channels = self.audio_channels.max(1);
+        let ready_signal = Arc::clone(&self.video_ready_signal); // VIDEO SYNC
+        let hw_accel = self.hw_accel_mode; // Capture for thread
         
         // Pobieramy filtry video
         let (vf_opt, _) = self.build_playback_filters(start_time);
@@ -1585,21 +2458,26 @@ impl VideoEditorApp {
                 scale_str
             };
 
-            let mut child = match Command::new("ffmpeg")
+            let start_time_str = format!("{:.3}", start_time);
+            
+            let mut cmd = Command::new("ffmpeg");
+            cmd.args(["-hide_banner", "-loglevel", "error"]);
+            
+            match hw_accel {
+                HwAccelMode::Auto => { cmd.args(["-hwaccel", "auto"]); },
+                HwAccelMode::Cuda => { cmd.args(["-hwaccel", "cuda"]); },
+                HwAccelMode::Vaapi => { cmd.args(["-hwaccel", "vaapi"]); },
+                HwAccelMode::VideoToolbox => { cmd.args(["-hwaccel", "videotoolbox"]); },
+                HwAccelMode::None => {}, 
+            }
+            
+            let mut child = match cmd
                 .args([
-                    "-hide_banner",
-                    "-loglevel",
-                    "error",
-                    "-ss",
-                    &format!("{:.3}", start_time),
-                    "-i",
-                    &input,
-                    "-vf",
-                    &vf_string,
-                    "-f",
-                    "rawvideo",
-                    "-pix_fmt",
-                    "rgba",
+                    "-ss", &start_time_str,
+                    "-i", &input,
+                    "-vf", &vf_string,
+                    "-f", "rawvideo",
+                    "-pix_fmt", "rgba",
                     "-",
                 ])
                 .stdout(Stdio::piped())
@@ -1618,20 +2496,20 @@ impl VideoEditorApp {
             let mut buffer = vec![0u8; frame_size];
             let mut frame_idx = (start_time * fps).floor() as u64;
             while !stop_thread.load(Ordering::Relaxed) {
-                if let Err(_) = stdout.read_exact(&mut buffer) {
+                if let Err(e) = stdout.read_exact(&mut buffer) {
+                    println!("FFmpeg read error (Unexpected EOF?): {}", e);
                     break;
                 }
                 
-                let target_video_time = frame_idx as f32 / fps;
-                
                 // --- Frame Dropping Logic ---
+                let video_timestamp = frame_idx as f32 / fps;
+                let target_video_rel = video_timestamp - start_time; // Time relative to playback start
                 let played_samples = audio_clock.load(Ordering::Relaxed);
                 let current_audio_time = played_samples as f32 / (sample_rate as f32 * channels as f32);
-                let early_diff = target_video_time - current_audio_time;
+                let early_diff = target_video_rel - current_audio_time;
                 
-                // Jesli jestesmy spoznieni wiecej niz 50ms (0.05s) wzgledem audio,
-                // to pomijamy renderowanie tej klatki (drop), zeby nadgonic czas.
-                if early_diff < -0.05 {
+                // Jesli jestesmy spoznieni więcej niż 50ms I wideo juz ruszylo (signal=true)
+                if ready_signal.load(Ordering::Relaxed) && early_diff < -0.05 {
                     frame_idx += 1;
                     continue;
                 }
@@ -1645,7 +2523,7 @@ impl VideoEditorApp {
                     let played_samples = audio_clock.load(Ordering::Relaxed);
                     let current_audio_time = played_samples as f32 / (sample_rate as f32 * channels as f32);
                     
-                    let diff = target_video_time - current_audio_time;
+                    let diff = target_video_rel - current_audio_time;
                     
                     if diff <= 0.005 {
                         break;
@@ -1667,6 +2545,11 @@ impl VideoEditorApp {
                     egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], &buffer);
                 if let Ok(mut slot) = frames.lock() {
                     *slot = Some(image);
+                }
+                
+                // Signal readiness AFTER frame is pushed
+                if !ready_signal.load(Ordering::Relaxed) {
+                    ready_signal.store(true, Ordering::Relaxed);
                 }
                 frame_idx += 1;
             }
@@ -1782,6 +2665,7 @@ fn scaled_preview_size(width: u32, height: u32, max_width: u32) -> (u32, u32) {
 
 impl Default for VideoEditorApp {
     fn default() -> Self {
+        let (tx, rx) = mpsc::channel();
         Self {
             input_path: String::new(),
             output_path: String::new(),
@@ -1794,6 +2678,7 @@ impl Default for VideoEditorApp {
             mark_in: None,
             mark_out: None,
             selected_clip: None,
+            selected_track: TrackType::Both,
             preview_texture: None,
             waveform_texture: None,
             thumb_textures: Vec::new(),
@@ -1817,14 +2702,31 @@ impl Default for VideoEditorApp {
             was_dragging_playhead: false,
             timeline_zoom: 0.0,
             timeline_offset: 0.0,
-            last_drag_preview_time: None,
             last_drag_preview_playhead: -1.0,
             live_drag_preview: true,
             tool: Tool::Hand,
             dragging_timeline: false,
             dragging_fade: None,
+            dragging_clip: None,
+            drag_clip_offset: 0.0,
+
             ripple_delete: false,
+            show_settings: false,
+            language: Language::En,
+            text: TextResources::new(Language::En),
+            language_switch_start: None,
             status: String::new(),
+            preview_rx: rx,
+            preview_tx: tx,
+            preview_busy: Arc::new(AtomicBool::new(false)),
+            frame_cache: HashMap::new(),
+            frame_cache_max_size: 100,  // Max 100 frames in cache (~50MB for 720p)
+            
+            waiting_for_video_ready: false,
+            video_ready_signal: Arc::new(AtomicBool::new(false)),
+            playback_start_playhead: 0.0,
+            
+            hw_accel_mode: HwAccelMode::None,
         }
     }
 }
