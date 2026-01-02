@@ -1089,6 +1089,63 @@ fn draw_timeline(ui: &mut egui::Ui, app: &mut VideoEditorApp) -> bool {
             egui::TextStyle::Body.resolve(ui.style()),
             egui::Color32::from_gray(160),
         );
+        
+        // Handle library asset drop even when timeline is empty
+        if let Some(asset_idx) = app.dragging_library_asset {
+            let pointer_pos = ui.input(|i| i.pointer.latest_pos()).unwrap_or_default();
+            let in_timeline = rect.contains(pointer_pos);
+            let released = ui.input(|i| i.pointer.any_released());
+            
+            if released {
+                if in_timeline {
+                    // Create clip at time 0.0 on empty timeline
+                    if let Some(asset) = app.media_library.get(asset_idx) {
+                        let asset_duration = asset.duration;
+                        let asset_kind = asset.kind;
+                        let asset_name = asset.name.clone();
+                        let asset_path = asset.path.clone();
+                        
+                        app.clips.push(Clip {
+                            asset_id: Some(asset_idx),
+                            start: 0.0,
+                            end: asset_duration,
+                            fade_in: 0.0,
+                            fade_out: 0.0,
+                            linked: asset_kind == MediaType::Video,
+                            video_enabled: asset_kind != MediaType::Audio,
+                            audio_enabled: asset_kind != MediaType::Image,
+                        });
+                        app.selected_clip = Some(app.clips.len() - 1);
+                        app.duration = asset_duration;
+                        
+                        // Set video dimensions
+                        if asset_kind == MediaType::Video || asset_kind == MediaType::Image {
+                            if let Ok((_, w, h, fps)) = get_video_info_ffprobe(&asset_path) {
+                                app.video_width = w;
+                                app.video_height = h;
+                                if fps > 0.0 {
+                                    app.video_fps = fps;
+                                }
+                            }
+                        }
+                        
+                        app.status = format!("Dropped: {} (new project)", asset_name);
+                    }
+                }
+                app.dragging_library_asset = None;
+                return true; // changed
+            }
+            
+            // Visual feedback for empty timeline
+            if in_timeline && ui.input(|i| i.pointer.any_down()) {
+                painter.rect_stroke(
+                    rect,
+                    4.0,
+                    egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 200, 100)),
+                );
+            }
+        }
+        
         return false;
     }
 
